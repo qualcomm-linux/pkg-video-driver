@@ -1,17 +1,17 @@
 name: Package Build PR Check
 description: |
   This workflow will execute when a PR is open against the configured branch.
-  On top of whatever kind of CI/CD logic happens in this upstream repo, this 
+  On top of whatever kind of CI/CD logic happens in this upstream repo, this
   workflow will make sure that what is attempted to be merged in the main release
   branch won't break the debian package. The variable PKG_REPO_GITHUB_NAME needs to
-  be set in the repo where this file reside. This variable hold the packaging repo 
+  be set in the repo where this file reside. This variable hold the packaging repo
   name on github associated to this upstream repo. What will happen is that the PR
   triggering this workflow will go knock on the packaging repo's door and trigger
   a full build of the package if it were to include these changes.
 
 on:
   pull_request_target:
-    branches: [ main, development ]
+    branches: [ main ]
     types:
       - ready_for_review
       - synchronize
