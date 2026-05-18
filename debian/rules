@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/pkg-info.mk
+
+%:
+	dh $@
+
+override_dh_install:
+	mkdir -p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)
+	find . -path ./debian -prune -o -path ./.pc -prune -o -path ./pkg-video-driver -prune -o -print0|cpio -0p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r pkg-video-driver/scripts debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	dh_install
+
+override_dh_auto_clean override_dh_auto_build override_dh_auto_test override_dh_auto_install:
