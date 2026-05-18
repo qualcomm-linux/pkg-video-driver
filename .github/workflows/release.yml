@@ -10,7 +10,7 @@ on:
       distro-codename:
         description: The distribution codename to build for. Ex noble, questing, etc
         type: choice
-        default: noble
+        default: trixie
         options:
           - noble
           - questing
