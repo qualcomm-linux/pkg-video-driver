@@ -1,7 +1,7 @@
 Source: iris-vpu
 Section: non-free/kernel
 Priority: optional
-Maintainer: Video Driver Maintainers <video-driver.maintainers@qti.qualcomm.com>
+Maintainer: Renjiang Han <renjiang@qti.qualcomm.com>
 Build-Depends: debhelper-compat (= 13), dh-sequence-dkms, cpio
 Rules-Requires-Root: no
 Standards-Version: 4.7.2
@@ -9,10 +9,14 @@ Homepage: https://github.com/qualcomm-linux/video-driver
 
 Package: iris-vpu-dkms
 Architecture: all
-Depends: ${misc:Depends}
-Description: DKMS package for Qualcomm iris_vpu video driver
- This package provides the DKMS source for the iris_vpu kernel module,
- the Qualcomm MSM VIDC out-of-tree video driver for Qualcomm platforms.
+Depends: dkms (>= 2.6), kmod, ${misc:Depends}
+Conflicts: qcom-iris-dkms
+Description: DKMS package for MSM VIDC driver (out-of-tree)
+ This package installs source for the 'video' kernel module and builds
+ it via DKMS on the target machine using /lib/modules/${kernelver}/build.
+ .
+ DKMS packaging for MSM VIDC driver (out-of-tree).
+ Build occurs on install via /lib/modules/${kernelver}/build.
  .
  The driver supports multiple platforms and automatically detects the
  platform from device tree compatible string to enable appropriate
