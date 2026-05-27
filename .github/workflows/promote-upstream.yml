@@ -5,10 +5,10 @@ on:
     inputs:
 
       debian-branch:
-        description: The debian branch to apply the promotion to. For example branch "debian/qcom-next"
+        description: The debian branch to apply the promotion to. For example branch "qcom/debian/latest"
         type: string
         required: false
-        default: debian/qcom-next
+        default: qcom/debian/latest
 
       upstream-tag:
         description: The upstream tag to promote this package repo to. Eg, v1.1.0 or 1.2.0, depending on the versioning style
@@ -17,7 +17,6 @@ on:
 
 permissions:
   contents: write
-  packages: read
   pull-requests: write
 
 jobs:
@@ -29,5 +28,4 @@ jobs:
       debian-branch: ${{inputs.debian-branch}}
       upstream-tag: ${{inputs.upstream-tag}}
       upstream-repo: ${{vars.UPSTREAM_REPO_GITHUB_NAME}}
-    secrets:
-      PAT: ${{secrets.DEB_PKG_BOT_CI_TOKEN}}
+    secrets: inherit

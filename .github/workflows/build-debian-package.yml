@@ -7,15 +7,15 @@ on:
     inputs:
 
       debian-ref:
-        description: The debian ref to build. For example branch "debian/qcom-next" or tag "debian/1.0.0-1"
+        description: The debian ref to build. For example branch "qcom/debian/latest" or tag "debian/1.0.0-1"
         type: string
         required: true
-        default: debian/qcom-next
+        default: qcom/debian/latest
 
       distro-codename:
         description: The distribution codename to build for. Ex noble, questing, etc
         type: choice
-        default: trixie
+        default: noble
         options:
           - noble
           - questing
@@ -30,7 +30,6 @@ on:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
   build:
@@ -40,3 +39,4 @@ jobs:
       debian-ref: ${{ inputs.debian-ref }}
       distro-codename: ${{ inputs.distro-codename }}
       run-abi-checker: ${{ inputs.abi-checker }}
+    secrets: inherit

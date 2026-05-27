@@ -1,4 +1,6 @@
 #!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 
 include /usr/share/dpkg/pkg-info.mk
 
@@ -7,8 +9,32 @@ include /usr/share/dpkg/pkg-info.mk
 
 override_dh_install:
 	mkdir -p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)
-	find . -path ./debian -prune -o -path ./.pc -prune -o -path ./pkg-video-driver -prune -o -print0|cpio -0p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	find . \
+		\( -path ./debian \
+		-o -path ./.pc \
+		-o -path ./pkg-video-driver \
+		-o -path ./msm_video \
+		-o -path ./.github \
+		-o -path ./Android.bp \
+		-o -path ./Android.mk \
+		-o -path ./BUILD.bazel \
+		-o -path ./Kconfig \
+		-o -path ./target.bzl \
+		-o -path ./target_variants.bzl \
+		-o -path ./video_driver_build.bzl \
+		-o -path ./video_modules.bzl \
+		-o -path ./video_kernel_board.mk \
+		-o -path ./video_kernel_headers.py \
+		-o -path ./video_kernel_product.mk \) -prune \
+		-o -print0 | cpio -0p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
 	cp -r pkg-video-driver/scripts debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
 	dh_install
+
+override_dh_builddeb:
+	mkdir -p debian/iris-vpu-dkms/DEBIAN
+	if [ -f debian/postinst ]; then install -m 755 debian/postinst debian/iris-vpu-dkms/DEBIAN/postinst; fi
+	if [ -f debian/prerm ]; then install -m 755 debian/prerm debian/iris-vpu-dkms/DEBIAN/prerm; fi
+	if [ -f debian/postrm ]; then install -m 755 debian/postrm debian/iris-vpu-dkms/DEBIAN/postrm; fi
+	dh_builddeb
 
 override_dh_auto_clean override_dh_auto_build override_dh_auto_test override_dh_auto_install:
