@@ -1,14 +1,36 @@
 #!/usr/bin/make -f
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 
 include /usr/share/dpkg/pkg-info.mk
 
 %:
 	dh $@
 
+override_dh_dkms:
+	# Suppress dh_dkms: we manage DKMS manually in postinst/prerm/postrm.
+	# dh_dkms (injected via dh-sequence-dkms in Build-Depends) would install
+	# debian/iris-vpu-dkms.dkms with a literal #MODULE_VERSION# placeholder,
+	# causing the DKMS trigger to fail with "iris-vpu/#MODULE_VERSION#".
+
 override_dh_install:
 	mkdir -p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)
-	find . -path ./debian -prune -o -path ./.pc -prune -o -path ./pkg-video-driver -prune -o -print0|cpio -0p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r pkg-video-driver/scripts debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	dh_install
+	# Install dkms.conf with correct version (dh_dkms cannot reliably replace #MODULE_VERSION#)
+	sed "s/PACKAGE_VERSION=\"[^\"]*\"/PACKAGE_VERSION=\"$(DEB_VERSION_UPSTREAM)\"/" \
+	    pkg-iris-vpu/dkms.conf > debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/dkms.conf
+	# Install only necessary source files for DKMS build
+	cp Makefile debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp Kbuild debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r driver debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r video debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r include debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r config debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	cp -r pkg-iris-vpu/scripts debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
+	# Install modprobe blacklist to /usr/lib/modprobe.d/ (package-managed, included in initramfs)
+	mkdir -p debian/iris-vpu-dkms/usr/lib/modprobe.d
+	install -m 644 debian/modprobe.d/iris-vpu-dkms.conf debian/iris-vpu-dkms/usr/lib/modprobe.d/iris-vpu-dkms.conf
+	# Install load script (service file handled by dh_installsystemd)
+	mkdir -p debian/iris-vpu-dkms/usr/lib/iris-vpu-dkms
+	install -m 755 debian/iris-vpu-load.sh debian/iris-vpu-dkms/usr/lib/iris-vpu-dkms/iris-vpu-load.sh
 
 override_dh_auto_clean override_dh_auto_build override_dh_auto_test override_dh_auto_install:
