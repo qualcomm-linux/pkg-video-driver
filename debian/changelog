@@ -1,3 +1,9 @@
+iris-vpu (1.0.16-1) UNRELEASED; urgency=medium
+
+  * New upstream release
+
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 09 Jun 2026 06:47:56 +0000
+
 iris-vpu (1.0.16-1) trixie; urgency=medium
 
   [ Renjiang Han ]
