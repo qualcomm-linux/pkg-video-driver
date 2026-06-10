@@ -131,7 +131,7 @@ jobs:
           dch \
             --distribution=UNRELEASED \
             --newversion="${{ env.NORMALIZED_VERSION }}-1" \
-            'New upstream release'
+            "New upstream release ${{ env.NORMALIZED_VERSION }}."
           git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
 
       - name: Push PR branch and open PR
@@ -212,7 +212,7 @@ jobs:
           dch \
             --distribution=UNRELEASED \
             --newversion="${{ env.NORMALIZED_VERSION }}-1" \
-            'New upstream release'
+            "New upstream release ${{ env.NORMALIZED_VERSION }}."
           git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
 
       - name: Push PR branch and open PR
