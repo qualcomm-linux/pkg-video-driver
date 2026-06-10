@@ -1,10 +1,8 @@
-iris-vpu (1.0.16-1) resolute; urgency=medium
+iris-vpu (1.0.16-1) UNRELEASED; urgency=medium
 
-  [ Renjiang Han ]
-  * Initial release.
+  * Initial Debian release.
+  * Package iris-vpu-dkms: DKMS package for MSM VIDC video driver (out-of-tree).
+  * Supports dynamic kernel module compilation via DKMS on the target machine.
+  * Supported platforms: hamoa, lemans.
 
-  [ GitHub Service Bot ]
-  * New upstream release
-  * New upstream release
-
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 09 Jun 2026 02:06:29 +0000
+ -- Renjiang Han <renjiang@qti.qualcomm.com>  Tue, 09 Jun 2026 02:06:29 +0000
