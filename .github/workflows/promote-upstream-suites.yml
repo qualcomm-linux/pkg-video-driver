@@ -1,0 +1,226 @@
+name: Promote New Upstream Version (Suites)
+description: |
+  Promote a new upstream version to all Debian/Ubuntu packaging suites simultaneously.
+  Covers: qcom/debian/latest (unstable), qcom/debian/trixie, qcom/ubuntu/resolute.
+  Can be triggered manually via workflow_dispatch, or automatically via
+  repository_dispatch from the upstream video-driver repository when a new tag is pushed.
+
+  Architecture:
+  - promote-latest uses the standard reusable workflow for qcom/debian/latest.
+    This also imports the upstream tag into upstream/latest and pushes it.
+  - promote-trixie and promote-resolute use custom inline steps that run in
+    PARALLEL after promote-latest completes. They create branch-specific PR
+    branches (debian/pr/<safe-branch>/<version>-1) to avoid conflicts with the
+    fixed PR branch name (debian/pr/<version>-1) used by the reusable workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream-tag:
+        description: The upstream tag to promote. Eg, v1.1.0 or 1.2.0
+        type: string
+        required: true
+
+  repository_dispatch:
+    types: [upstream-release]
+
+permissions:
+  contents: write
+  packages: read
+  pull-requests: write
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 1: Promote qcom/debian/latest via the standard reusable workflow.
+  # This job also handles importing the upstream tag into upstream/latest and
+  # pushing the upstream/<version> tag to the repo.
+  # ─────────────────────────────────────────────────────────────────────────────
+  promote-latest:
+    uses: qualcomm-linux/qcom-build-utils/.github/workflows/qcom-promote-upstream-reusable-workflow.yml@main
+    with:
+      qcom-build-utils-ref: main
+      debian-branch: qcom/debian/latest
+      upstream-tag: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+      upstream-repo: ${{ vars.UPSTREAM_REPO_GITHUB_NAME }}
+    secrets:
+      PAT: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in PARALLEL
+  # after promote-latest completes.
+  #
+  # Why custom inline steps instead of the reusable workflow?
+  # The reusable workflow hard-codes the PR branch name as
+  # "debian/pr/<version>-1" (e.g. debian/pr/1.0.17-1), which is identical for
+  # all three branches. Running it a second time would fail because:
+  #   1. The upstream/<version> tag already exists → validation detects it
+  #   2. An open PR with head "debian/pr/1.0.17-1" already exists → error
+  #
+  # The custom steps below create branch-specific PR branches:
+  #   debian/pr/qcom-debian-trixie/1.0.17-1
+  #   debian/pr/qcom-ubuntu-resolute/1.0.17-1
+  # These are unique, so both jobs can run in parallel without conflicts.
+  # ─────────────────────────────────────────────────────────────────────────────
+
+  promote-trixie:
+    needs: promote-latest
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/qualcomm-linux/pkg-builder:noble
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      DEBIAN_BRANCH: qcom/debian/trixie
+      UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+      GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+    steps:
+
+      - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
+        uses: actions/checkout@v5
+        with:
+          repository: qualcomm-linux/qcom-build-utils
+          ref: main
+          path: ./qcom-build-utils
+          fetch-depth: 1
+          sparse-checkout: scripts
+
+      - name: Checkout package repo
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+          path: ./package-repo
+          fetch-depth: 0
+
+      - name: Authenticate with GitHub
+        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+
+      - name: Compute normalized version and PR branch name
+        run: |
+          NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
+          SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
+          PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
+          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
+          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
+          echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
+          echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
+          echo "ℹ️ PR branch        : $PR_BRANCH"
+
+      - name: Fetch upstream tag from upstream repo
+        working-directory: ./package-repo
+        run: |
+          git remote add upstream-source \
+            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+          git fetch upstream-source "+refs/tags/*:refs/tags/*"
+
+      - name: Create PR branch and merge upstream
+        working-directory: ./package-repo
+        run: |
+          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
+          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          git checkout "$DEBIAN_BRANCH"
+          git checkout -b "${{ env.PR_BRANCH }}"
+          ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
+
+      - name: Promote changelog
+        working-directory: ./package-repo
+        run: |
+          export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
+          export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          dch \
+            --distribution=UNRELEASED \
+            --newversion="${{ env.NORMALIZED_VERSION }}-1" \
+            'New upstream release'
+          git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
+
+      - name: Push PR branch and open PR
+        working-directory: ./package-repo
+        run: |
+          git push origin "${{ env.PR_BRANCH }}"
+          gh pr create \
+            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
+            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
+            --base "$DEBIAN_BRANCH" \
+            --head "${{ env.PR_BRANCH }}"
+
+  promote-resolute:
+    needs: promote-latest
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/qualcomm-linux/pkg-builder:noble
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      DEBIAN_BRANCH: qcom/ubuntu/resolute
+      UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+      GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+    steps:
+
+      - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
+        uses: actions/checkout@v5
+        with:
+          repository: qualcomm-linux/qcom-build-utils
+          ref: main
+          path: ./qcom-build-utils
+          fetch-depth: 1
+          sparse-checkout: scripts
+
+      - name: Checkout package repo
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+          path: ./package-repo
+          fetch-depth: 0
+
+      - name: Authenticate with GitHub
+        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+
+      - name: Compute normalized version and PR branch name
+        run: |
+          NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
+          SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
+          PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
+          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
+          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
+          echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
+          echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
+          echo "ℹ️ PR branch        : $PR_BRANCH"
+
+      - name: Fetch upstream tag from upstream repo
+        working-directory: ./package-repo
+        run: |
+          git remote add upstream-source \
+            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+          git fetch upstream-source "+refs/tags/*:refs/tags/*"
+
+      - name: Create PR branch and merge upstream
+        working-directory: ./package-repo
+        run: |
+          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
+          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          git checkout "$DEBIAN_BRANCH"
+          git checkout -b "${{ env.PR_BRANCH }}"
+          ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
+
+      - name: Promote changelog
+        working-directory: ./package-repo
+        run: |
+          export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
+          export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          dch \
+            --distribution=UNRELEASED \
+            --newversion="${{ env.NORMALIZED_VERSION }}-1" \
+            'New upstream release'
+          git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
+
+      - name: Push PR branch and open PR
+        working-directory: ./package-repo
+        run: |
+          git push origin "${{ env.PR_BRANCH }}"
+          gh pr create \
+            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
+            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
+            --base "$DEBIAN_BRANCH" \
+            --head "${{ env.PR_BRANCH }}"
