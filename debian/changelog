@@ -7,6 +7,6 @@ iris-vpu (1.0.17-1) UNRELEASED; urgency=medium
   * Supported platforms: hamoa, lemans.
 
   [ GitHub Service Bot ]
-  * New upstream release
+  * New upstream release 1.0.17.
 
  -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Wed, 10 Jun 2026 09:19:25 +0000
