@@ -64,12 +64,12 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────────────
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Step 1b: Enable auto-merge for the qcom/debian/latest PR created by
-  # promote-latest. The reusable workflow does not support auto-merge natively,
-  # so we add a separate job here. The PR will be merged automatically once all
-  # required status checks pass.
+  # Step 1b: Post-processing for the qcom/debian/latest PR created by
+  # promote-latest. Updates the changelog entry to include the version number
+  # and enables auto-merge so the PR merges automatically once all required
+  # status checks pass.
   # ─────────────────────────────────────────────────────────────────────────────
-  enable-automerge-latest:
+  post-promote-latest:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
     container:
@@ -89,7 +89,7 @@ jobs:
           fetch-depth: 0
 
       - name: Authenticate with GitHub
-        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Update changelog entry and enable auto-merge for qcom/debian/latest PR
         working-directory: ./package-repo
@@ -151,7 +151,7 @@ jobs:
           fetch-depth: 0
 
       - name: Authenticate with GitHub
-        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Compute normalized version and PR branch name
         run: |
@@ -236,7 +236,7 @@ jobs:
           fetch-depth: 0
 
       - name: Authenticate with GitHub
-        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Compute normalized version and PR branch name
         run: |
