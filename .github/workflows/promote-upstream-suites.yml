@@ -8,10 +8,10 @@ description: |
   Architecture:
   - promote-latest uses the standard reusable workflow for qcom/debian/latest.
     This also imports the upstream tag into upstream/latest and pushes it.
-  - promote-trixie and promote-resolute use custom inline steps that run in
-    PARALLEL after promote-latest completes. They create branch-specific PR
-    branches (debian/pr/<safe-branch>/<version>-1) to avoid conflicts with the
-    fixed PR branch name (debian/pr/<version>-1) used by the reusable workflow.
+  - post-promote-latest updates the changelog and enables auto-merge for the
+    qcom/debian/latest PR, with rebase retry to handle concurrent base changes.
+  - promote-suites uses a matrix strategy to promote qcom/debian/trixie and
+    qcom/ubuntu/resolute in parallel, eliminating code duplication.
 
 on:
   workflow_dispatch:
@@ -28,6 +28,10 @@ permissions:
   contents: write
   packages: read
   pull-requests: write
+
+concurrency:
+  group: promote-upstream-suites-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+  cancel-in-progress: false
 
 jobs:
 
@@ -47,27 +51,15 @@ jobs:
       PAT: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in PARALLEL
-  # after promote-latest completes.
-  #
-  # Why custom inline steps instead of the reusable workflow?
-  # The reusable workflow hard-codes the PR branch name as
-  # "debian/pr/<version>-1" (e.g. debian/pr/1.0.17-1), which is identical for
-  # all three branches. Running it a second time would fail because:
-  #   1. The upstream/<version> tag already exists → validation detects it
-  #   2. An open PR with head "debian/pr/1.0.17-1" already exists → error
-  #
-  # The custom steps below create branch-specific PR branches:
-  #   debian/pr/qcom-debian-trixie/1.0.17-1
-  #   debian/pr/qcom-ubuntu-resolute/1.0.17-1
-  # These are unique, so both jobs can run in parallel without conflicts.
-  # ─────────────────────────────────────────────────────────────────────────────
-
-  # ─────────────────────────────────────────────────────────────────────────────
   # Step 1b: Post-processing for the qcom/debian/latest PR created by
-  # promote-latest. Updates the changelog entry to include the version number
-  # and enables auto-merge so the PR merges automatically once all required
-  # status checks pass.
+  # promote-latest.
+  #
+  # - Updates changelog entry to include the version number for traceability.
+  # - Rebases PR branch onto latest base branch before enabling auto-merge,
+  #   reducing "Base branch was modified" failures.
+  # - Uses --match-head-commit to prevent merging a stale PR head.
+  # - Rebase is retried both in the initial rebase phase and inside the
+  #   auto-merge retry loop.
   # ─────────────────────────────────────────────────────────────────────────────
   post-promote-latest:
     needs: promote-latest
@@ -91,46 +83,144 @@ jobs:
       - name: Update changelog entry and enable auto-merge for qcom/debian/latest PR
         working-directory: ./package-repo
         run: |
+          set -euo pipefail
+
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           PR_BRANCH="debian/pr/${NORMALIZED_VERSION}-1"
           echo "ℹ️ PR branch: $PR_BRANCH"
 
-          # Checkout the PR branch to update the changelog entry
           git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
           git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
-          git checkout "$PR_BRANCH"
+
+          # Fetch and checkout PR branch safely using explicit remote tracking.
+          # git checkout -B avoids "pathspec did not match" failures when the
+          # local branch does not yet exist.
+          git fetch origin "$PR_BRANCH"
+          git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
           # The reusable workflow writes "New upstream release" without version.
-          # Update it to include the version number for traceability, per
-          # Debian changelog quality standards.
+          # Update it to include the version number for traceability.
           sed -i "s/\* New upstream release$/\* New upstream release ${NORMALIZED_VERSION}./" debian/changelog
 
           git add debian/changelog
           git commit -s -m "debian: add version to changelog entry for traceability" || \
             echo "ℹ️ No changes needed (changelog already has version)"
 
-          git push origin "$PR_BRANCH" || true
+          # Ensure the PR exists before proceeding.
+          if ! gh pr view "$PR_BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "❌ PR not found for branch $PR_BRANCH"
+            exit 1
+          fi
 
-          # Enable auto-merge
-          echo "ℹ️ Enabling auto-merge for PR branch: $PR_BRANCH"
-          gh pr merge "$PR_BRANCH" \
+          # Resolve PR base branch dynamically.
+          BASE_BRANCH=$(gh pr view "$PR_BRANCH" \
             --repo "${{ github.repository }}" \
-            --auto --merge
+            --json baseRefName \
+            --jq '.baseRefName')
+          echo "ℹ️ Base branch: $BASE_BRANCH"
 
-  promote-trixie:
+          git fetch origin "$BASE_BRANCH"
+
+          # ── Initial rebase (with retry) ──────────────────────────────────────
+          # No push before this rebase: the changelog commit will be included in
+          # the rebased branch and pushed once in the single push below.
+          for i in 1 2 3; do
+            if git rebase "origin/$BASE_BRANCH"; then
+              echo "✅ Rebase successful (attempt $i)"
+              break
+            fi
+            echo "⚠️ Rebase failed (attempt $i), retrying..."
+            git rebase --abort || true
+            git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+            git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
+            sleep 2
+            if [ "$i" -eq 3 ]; then
+              echo "❌ Rebase failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+          git push --force-with-lease origin "$PR_BRANCH"
+
+          # ── Auto-merge (with retry + inner rebase retry) ─────────────────────
+          # --match-head-commit prevents GitHub from merging a stale head if
+          # someone pushes to the PR branch between our push and the merge.
+          for i in 1 2 3; do
+            HEAD_COMMIT=$(git rev-parse HEAD)
+            echo "ℹ️ Enabling auto-merge (attempt $i, head: $HEAD_COMMIT)"
+            if gh pr merge "$PR_BRANCH" \
+              --repo "${{ github.repository }}" \
+              --auto --merge \
+              --match-head-commit "$HEAD_COMMIT"; then
+              echo "✅ Auto-merge enabled"
+              exit 0
+            fi
+
+            echo "⚠️ Auto-merge failed (attempt $i), refreshing branch..."
+            git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+            git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
+
+            # Inner rebase retry
+            REBASE_OK=false
+            for j in 1 2 3; do
+              if git rebase "origin/$BASE_BRANCH"; then
+                echo "✅ Inner rebase successful (attempt $j)"
+                REBASE_OK=true
+                break
+              fi
+              echo "⚠️ Inner rebase failed (attempt $j), retrying..."
+              git rebase --abort || true
+              git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+              git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
+              sleep 2
+            done
+
+            if [ "$REBASE_OK" = "false" ]; then
+              echo "⚠️ Inner rebase failed after 3 attempts, skipping push for this round"
+              sleep 2
+              continue
+            fi
+
+            git push --force-with-lease origin "$PR_BRANCH"
+            sleep 2
+          done
+
+          echo "⚠️ Failed to enable auto-merge after retries, leaving PR open for manual merge"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in PARALLEL
+  # after promote-latest completes.
+  #
+  # A matrix strategy replaces the former promote-trixie / promote-resolute
+  # duplicate jobs, halving the YAML size while keeping identical behaviour.
+  #
+  # Uses unique PR branch names:
+  #   debian/pr/qcom-debian-trixie/<version>-1
+  #   debian/pr/qcom-ubuntu-resolute/<version>-1
+  #
+  # Auto-merge is best-effort: if the target branch has no branch protection
+  # rules we warn and leave the PR open rather than failing the workflow.
+  # --match-head-commit prevents merging a stale head.
+  # ─────────────────────────────────────────────────────────────────────────────
+  promote-suites:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        debian-branch:
+          - qcom/debian/trixie
+          - qcom/ubuntu/resolute
     container:
       image: ghcr.io/qualcomm-linux/pkg-builder:noble
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      DEBIAN_BRANCH: qcom/debian/trixie
+      DEBIAN_BRANCH: ${{ matrix.debian-branch }}
       UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
       GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
     steps:
-
       - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
         uses: actions/checkout@v6
         with:
@@ -149,34 +239,49 @@ jobs:
 
       - name: Compute normalized version and PR branch name
         run: |
+          set -euo pipefail
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
           PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
-          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
-          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
-          echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
+          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> "$GITHUB_ENV"
+          echo "PR_BRANCH=$PR_BRANCH" >> "$GITHUB_ENV"
+          echo "ℹ️ Upstream tag      : $UPSTREAM_TAG"
           echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
-          echo "ℹ️ PR branch        : $PR_BRANCH"
+          echo "ℹ️ PR branch         : $PR_BRANCH"
 
       - name: Fetch upstream tag from upstream repo
         working-directory: ./package-repo
         run: |
-          git remote add upstream-source \
-            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+          set -euo pipefail
+          if ! git remote get-url upstream-source >/dev/null 2>&1; then
+            git remote add upstream-source \
+              "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+          fi
           git fetch upstream-source "+refs/tags/*:refs/tags/*"
 
-      - name: Create PR branch and merge upstream
+      - name: Create or reset PR branch and merge upstream
         working-directory: ./package-repo
         run: |
+          set -euo pipefail
           git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
           git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
-          git checkout "$DEBIAN_BRANCH"
+          git fetch origin "$DEBIAN_BRANCH"
+
+          # Safely checkout the debian branch using explicit remote tracking.
+          git checkout -B "$DEBIAN_BRANCH" "origin/$DEBIAN_BRANCH"
+
+          # Delete local PR branch if it exists (idempotency for re-runs).
+          if git show-ref --verify --quiet "refs/heads/${{ env.PR_BRANCH }}"; then
+            git branch -D "${{ env.PR_BRANCH }}"
+          fi
+
           git checkout -b "${{ env.PR_BRANCH }}"
           ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
 
       - name: Promote changelog
         working-directory: ./package-repo
         run: |
+          set -euo pipefail
           export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
           export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
           dch \
@@ -185,98 +290,49 @@ jobs:
             "New upstream release ${{ env.NORMALIZED_VERSION }}."
           git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
 
-      - name: Push PR branch and open PR
+      - name: Push PR branch
         working-directory: ./package-repo
         run: |
-          git push origin "${{ env.PR_BRANCH }}"
-          gh pr create \
-            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
-            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
-            --base "$DEBIAN_BRANCH" \
-            --head "${{ env.PR_BRANCH }}"
-          # Enable auto-merge: PR will be merged automatically once all required
-          # checks pass (build CI must succeed). Requires branch protection rules
-          # to be configured with required status checks.
-          gh pr merge "${{ env.PR_BRANCH }}" --auto --merge
+          set -euo pipefail
+          git push --force-with-lease origin "${{ env.PR_BRANCH }}"
 
-  promote-resolute:
-    needs: promote-latest
-    runs-on: ubuntu-24.04-arm
-    container:
-      image: ghcr.io/qualcomm-linux/pkg-builder:noble
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    env:
-      DEBIAN_BRANCH: qcom/ubuntu/resolute
-      UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
-      GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
-    steps:
-
-      - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
-        uses: actions/checkout@v6
-        with:
-          repository: qualcomm-linux/qcom-build-utils
-          ref: main
-          path: ./qcom-build-utils
-          fetch-depth: 1
-          sparse-checkout: scripts
-
-      - name: Checkout package repo
-        uses: actions/checkout@v6
-        with:
-          token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
-          path: ./package-repo
-          fetch-depth: 0
-
-      - name: Compute normalized version and PR branch name
-        run: |
-          NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
-          SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
-          PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
-          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
-          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
-          echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
-          echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
-          echo "ℹ️ PR branch        : $PR_BRANCH"
-
-      - name: Fetch upstream tag from upstream repo
+      - name: Create PR if needed
         working-directory: ./package-repo
         run: |
-          git remote add upstream-source \
-            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
-          git fetch upstream-source "+refs/tags/*:refs/tags/*"
+          set -euo pipefail
+          PR_STATE=$(gh pr view "${{ env.PR_BRANCH }}" \
+            --repo "${{ github.repository }}" \
+            --json state --jq '.state' 2>/dev/null || echo "NOT_FOUND")
+          if [ "$PR_STATE" = "OPEN" ]; then
+            echo "ℹ️ PR already exists and is open for branch ${{ env.PR_BRANCH }}"
+          else
+            if [ "$PR_STATE" != "NOT_FOUND" ]; then
+              echo "ℹ️ Previous PR for branch ${{ env.PR_BRANCH }} is $PR_STATE, creating a new one"
+            fi
+            gh pr create \
+              --repo "${{ github.repository }}" \
+              --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
+              --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
+              --base "$DEBIAN_BRANCH" \
+              --head "${{ env.PR_BRANCH }}"
+          fi
 
-      - name: Create PR branch and merge upstream
+      - name: Enable auto-merge when supported
         working-directory: ./package-repo
         run: |
-          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
-          git checkout "$DEBIAN_BRANCH"
-          git checkout -b "${{ env.PR_BRANCH }}"
-          ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          set +e
+          gh pr merge "${{ env.PR_BRANCH }}" \
+            --repo "${{ github.repository }}" \
+            --auto --merge \
+            --match-head-commit "$HEAD_COMMIT"
+          rc=$?
+          set -e
 
-      - name: Promote changelog
-        working-directory: ./package-repo
-        run: |
-          export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
-          dch \
-            --distribution=UNRELEASED \
-            --newversion="${{ env.NORMALIZED_VERSION }}-1" \
-            "New upstream release ${{ env.NORMALIZED_VERSION }}."
-          git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
-
-      - name: Push PR branch and open PR
-        working-directory: ./package-repo
-        run: |
-          git push origin "${{ env.PR_BRANCH }}"
-          gh pr create \
-            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
-            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
-            --base "$DEBIAN_BRANCH" \
-            --head "${{ env.PR_BRANCH }}"
-          # Enable auto-merge: PR will be merged automatically once all required
-          # checks pass (build CI must succeed). Requires branch protection rules
-          # to be configured with required status checks.
-          gh pr merge "${{ env.PR_BRANCH }}" --auto --merge
+          if [ "$rc" -ne 0 ]; then
+            echo "⚠️ Auto-merge was not enabled for $DEBIAN_BRANCH."
+            echo "⚠️ This usually means protected branch rules / required checks are not configured for the base branch."
+            echo "⚠️ The PR was created successfully and left open for manual merge or future auto-merge enablement."
+          else
+            echo "✅ Auto-merge enabled for $DEBIAN_BRANCH"
+          fi
