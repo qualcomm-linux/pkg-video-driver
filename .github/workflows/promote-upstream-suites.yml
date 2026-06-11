@@ -135,7 +135,7 @@ jobs:
     steps:
 
       - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: qualcomm-linux/qcom-build-utils
           ref: main
@@ -144,7 +144,7 @@ jobs:
           sparse-checkout: scripts
 
       - name: Checkout package repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
           path: ./package-repo
@@ -220,7 +220,7 @@ jobs:
     steps:
 
       - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           repository: qualcomm-linux/qcom-build-utils
           ref: main
@@ -229,7 +229,7 @@ jobs:
           sparse-checkout: scripts
 
       - name: Checkout package repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
           path: ./package-repo
