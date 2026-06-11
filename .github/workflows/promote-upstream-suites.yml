@@ -63,6 +63,63 @@ jobs:
   # These are unique, so both jobs can run in parallel without conflicts.
   # ─────────────────────────────────────────────────────────────────────────────
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Step 1b: Enable auto-merge for the qcom/debian/latest PR created by
+  # promote-latest. The reusable workflow does not support auto-merge natively,
+  # so we add a separate job here. The PR will be merged automatically once all
+  # required status checks pass.
+  # ─────────────────────────────────────────────────────────────────────────────
+  enable-automerge-latest:
+    needs: promote-latest
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/qualcomm-linux/pkg-builder:noble
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+      UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+    steps:
+      - name: Checkout package repo
+        uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+          path: ./package-repo
+          fetch-depth: 0
+
+      - name: Authenticate with GitHub
+        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
+
+      - name: Update changelog entry and enable auto-merge for qcom/debian/latest PR
+        working-directory: ./package-repo
+        run: |
+          NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
+          PR_BRANCH="debian/pr/${NORMALIZED_VERSION}-1"
+          echo "ℹ️ PR branch: $PR_BRANCH"
+
+          # Checkout the PR branch to update the changelog entry
+          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
+          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          git checkout "$PR_BRANCH"
+
+          # The reusable workflow writes "New upstream release" without version.
+          # Update it to include the version number for traceability, per
+          # Debian changelog quality standards.
+          sed -i "s/\* New upstream release$/\* New upstream release ${NORMALIZED_VERSION}./" debian/changelog
+
+          git add debian/changelog
+          git commit -s -m "debian: add version to changelog entry for traceability" || \
+            echo "ℹ️ No changes needed (changelog already has version)"
+
+          git push origin "$PR_BRANCH" || true
+
+          # Enable auto-merge
+          echo "ℹ️ Enabling auto-merge for PR branch: $PR_BRANCH"
+          gh pr merge "$PR_BRANCH" \
+            --repo "${{ github.repository }}" \
+            --auto --merge
+
   promote-trixie:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
@@ -143,6 +200,10 @@ jobs:
             --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
             --base "$DEBIAN_BRANCH" \
             --head "${{ env.PR_BRANCH }}"
+          # Enable auto-merge: PR will be merged automatically once all required
+          # checks pass (build CI must succeed). Requires branch protection rules
+          # to be configured with required status checks.
+          gh pr merge "${{ env.PR_BRANCH }}" --auto --merge
 
   promote-resolute:
     needs: promote-latest
@@ -224,3 +285,7 @@ jobs:
             --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
             --base "$DEBIAN_BRANCH" \
             --head "${{ env.PR_BRANCH }}"
+          # Enable auto-merge: PR will be merged automatically once all required
+          # checks pass (build CI must succeed). Requires branch protection rules
+          # to be configured with required status checks.
+          gh pr merge "${{ env.PR_BRANCH }}" --auto --merge
