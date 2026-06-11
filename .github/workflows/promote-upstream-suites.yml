@@ -82,14 +82,11 @@ jobs:
       UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
     steps:
       - name: Checkout package repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
           path: ./package-repo
           fetch-depth: 0
-
-      - name: Authenticate with GitHub
-        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Update changelog entry and enable auto-merge for qcom/debian/latest PR
         working-directory: ./package-repo
@@ -149,9 +146,6 @@ jobs:
           token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
           path: ./package-repo
           fetch-depth: 0
-
-      - name: Authenticate with GitHub
-        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Compute normalized version and PR branch name
         run: |
@@ -234,9 +228,6 @@ jobs:
           token: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
           path: ./package-repo
           fetch-depth: 0
-
-      - name: Authenticate with GitHub
-        run: echo "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}" | gh auth login --with-token
 
       - name: Compute normalized version and PR branch name
         run: |
