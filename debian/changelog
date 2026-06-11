@@ -1,10 +1,4 @@
-iris-vpu (1.0.16-2~) UNRELEASED; urgency=medium
-
-  * WIP — update changelog before next release
-
- -- Renjiang Han <renjiang@qti.qualcomm.com>  Wed, 10 Jun 2026 09:47:44 +0000
-
-iris-vpu (1.0.16-1) noble; urgency=medium
+iris-vpu (1.0.17-1) UNRELEASED; urgency=medium
 
   [ Renjiang Han ]
   * Initial Debian release.
@@ -12,4 +6,7 @@ iris-vpu (1.0.16-1) noble; urgency=medium
   * Supports dynamic kernel module compilation via DKMS on the target machine.
   * Supported platforms: hamoa, lemans.
 
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Wed, 10 Jun 2026 09:47:15 +0000
+  [ GitHub Service Bot ]
+  * New upstream release 1.0.17.
+
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Wed, 10 Jun 2026 09:19:25 +0000
