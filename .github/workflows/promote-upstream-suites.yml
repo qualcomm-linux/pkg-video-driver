@@ -64,6 +64,9 @@ jobs:
   post-promote-latest:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
     container:
       image: ghcr.io/qualcomm-linux/pkg-builder:noble
       credentials:
@@ -93,9 +96,19 @@ jobs:
           git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
 
           # Fetch and checkout PR branch safely using explicit remote tracking.
-          # git checkout -B avoids "pathspec did not match" failures when the
-          # local branch does not yet exist.
-          git fetch origin "$PR_BRANCH"
+          # Retry to handle transient network issues or race conditions where
+          # promote-latest has just pushed the branch.
+          for i in 1 2 3; do
+            if git fetch origin "$PR_BRANCH"; then
+              break
+            fi
+            echo "⚠️ git fetch origin $PR_BRANCH failed (attempt $i), retrying in 5s..."
+            sleep 5
+            if [ "$i" -eq 3 ]; then
+              echo "❌ git fetch origin $PR_BRANCH failed after 3 attempts"
+              exit 1
+            fi
+          done
           git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
           # The reusable workflow writes "New upstream release" without version.
@@ -103,12 +116,24 @@ jobs:
           sed -i "s/\* New upstream release$/\* New upstream release ${NORMALIZED_VERSION}./" debian/changelog
 
           git add debian/changelog
-          git commit -s -m "debian: add version to changelog entry for traceability" || \
+          if git diff --cached --quiet; then
             echo "ℹ️ No changes needed (changelog already has version)"
+          else
+            git commit -s -m "debian: add version to changelog entry for traceability"
+          fi
 
-          # Ensure the PR exists before proceeding.
-          if ! gh pr view "$PR_BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "❌ PR not found for branch $PR_BRANCH"
+          # Ensure the PR exists before proceeding (with retry for propagation delay).
+          PR_FOUND=false
+          for _i in 1 2 3 4 5; do
+            if gh pr view "$PR_BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              PR_FOUND=true
+              break
+            fi
+            echo "⚠️ PR not found yet (attempt $_i), waiting 5s..."
+            sleep 5
+          done
+          if [ "$PR_FOUND" = "false" ]; then
+            echo "❌ PR not found for branch $PR_BRANCH after retries"
             exit 1
           fi
 
@@ -130,9 +155,11 @@ jobs:
               break
             fi
             echo "⚠️ Rebase failed (attempt $i), retrying..."
+            # After abort, the local branch is restored to its pre-rebase state
+            # (including the changelog commit). Only re-fetch the base branch to
+            # get the latest upstream changes; do NOT reset the local branch.
             git rebase --abort || true
-            git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
-            git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
+            git fetch origin "$BASE_BRANCH"
             sleep 2
             if [ "$i" -eq 3 ]; then
               echo "❌ Rebase failed after 3 attempts"
@@ -205,6 +232,9 @@ jobs:
   promote-suites:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
@@ -276,7 +306,11 @@ jobs:
           fi
 
           git checkout -b "${{ env.PR_BRANCH }}"
-          ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
+
+          if ! ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"; then
+            echo "❌ merge_debian_packaging_upstream failed for tag $UPSTREAM_TAG on branch $DEBIAN_BRANCH"
+            exit 1
+          fi
 
       - name: Promote changelog
         working-directory: ./package-repo
@@ -315,6 +349,16 @@ jobs:
               --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
               --base "$DEBIAN_BRANCH" \
               --head "${{ env.PR_BRANCH }}"
+
+            # Wait for PR to be visible via API (GitHub may have a short propagation delay).
+            for i in 1 2 3 4 5; do
+              if gh pr view "${{ env.PR_BRANCH }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+                echo "✅ PR is now visible"
+                break
+              fi
+              echo "⚠️ PR not visible yet (attempt $i), waiting 5s..."
+              sleep 5
+            done
           fi
 
       - name: Enable auto-merge when supported
