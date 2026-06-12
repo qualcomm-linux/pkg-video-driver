@@ -17,6 +17,9 @@ name: Promote New Upstream Version (Suites)
 #   that branch:
 #   - if no-op: update changelog/version only
 #   - if real upstream content changed: follow the normal branch logic
+# - changelog_squash: after creating/updating the changelog entry, squash the
+#   top two entries into one, keeping all non-WIP user entries and combining
+#   all bot version entries. This removes WIP placeholders automatically.
 
 on:
   workflow_dispatch:
@@ -59,9 +62,8 @@ jobs:
   # promote-latest.
   #
   # - Updates changelog entry to include the version number for traceability.
-  # - Ensures there is an OPEN PR for the latest branch:
-  #   - if no PR exists, create one
-  #   - if an old PR exists but is CLOSED, create a new one
+  # - Squashes the top two changelog entries into one, removing WIP lines.
+  # - Ensures there is an OPEN PR for the latest branch.
   # - Detects whether the new upstream tag is a no-op relative to the latest
   #   upstream tag already merged into qcom/debian/latest.
   # - If no-op, rebuild the PR branch from qcom/debian/latest and keep only the
@@ -123,6 +125,129 @@ jobs:
 
           # Update changelog entry to include the version number for traceability.
           sed -i "s/\* New upstream release$/\* New upstream release ${NORMALIZED_VERSION}./" debian/changelog
+
+          # Squash the top two changelog entries into one and remove WIP lines.
+          # Merges the new version entry with the previous entry, keeping all
+          # non-WIP user entries and combining all bot version entries.
+          python3 << 'PYEOF'
+          import re, sys
+
+          path = 'debian/changelog'
+          with open(path, encoding='utf-8') as f:
+              content = f.read().rstrip() + '\n'
+
+          header_re = re.compile(r'(?m)^\S+\s+\([^)]+\)\s+\S+;[^\n]*$')
+          matches = list(header_re.finditer(content))
+
+          if not matches:
+              print('❌ Failed to parse changelog')
+              sys.exit(1)
+
+          entries = []
+          for i, m in enumerate(matches):
+              start = m.start()
+              end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+              entries.append(content[start:end].strip())
+
+          if len(entries) < 2:
+              cleaned = re.sub(r'(?mi)^.*\b(WIP|TODO|FIXME)\b.*\n?', '', entries[0])
+              with open(path, 'w', encoding='utf-8') as f:
+                  f.write(cleaned.strip() + '\n')
+              print('ℹ️ Only one entry, sanitized')
+              sys.exit(0)
+
+          SECTION_RE = re.compile(r'^  \[ (.+?) \]\s*$', re.MULTILINE)
+
+          def parse_entry(text):
+              lines = text.splitlines()
+              header = lines[0]
+              trailer = next((l for l in reversed(lines) if l.startswith(' -- ')), None)
+
+              sections, order = {}, []
+              cur, buf = None, []
+
+              for line in lines[1:]:
+                  if line.startswith(' -- '):
+                      if cur:
+                          sections[cur] = buf
+                      break
+
+                  m = SECTION_RE.match(line)
+                  if m:
+                      if cur:
+                          sections[cur] = buf
+                      cur = m.group(1)
+                      order.append(cur)
+                      buf = []
+                  elif cur:
+                      buf.append(line)
+
+              return header, sections, order, trailer
+
+          def clean_lines(lines):
+              return [
+                  l for l in lines
+                  if l.strip() and not re.search(r'\b(WIP|TODO|FIXME)\b', l, re.I)
+              ]
+
+          def dedupe(lines):
+              seen, out = set(), []
+              for l in lines:
+                  if l not in seen:
+                      seen.add(l)
+                      out.append(l)
+              return out
+
+          def build(header, sections, order, trailer):
+              out = [header, '']
+              for a in order:
+                  lines = clean_lines(sections.get(a, []))
+                  if not lines:
+                      continue
+                  out.append(f'  [ {a} ]')
+                  out.extend(lines)
+                  out.append('')
+              if trailer:
+                  out.append(trailer)
+              return '\n'.join(out).rstrip()
+
+          new_h, new_s, new_o, new_t = parse_entry(entries[0])
+          old_h, old_s, old_o, old_t = parse_entry(entries[1])
+
+          merged_s, merged_o = {}, []
+
+          def sort_versions(lines):
+              def key(l):
+                  m = re.search(r'(\d+\.\d+\.\d+)', l)
+                  return (0, tuple(map(int, m.group(1).split('.')))) if m else (1, l)
+
+              return sorted(lines, key=key)
+
+          for a in list(old_o) + [x for x in new_o if x not in old_o]:
+              old_l = clean_lines(old_s.get(a, []))
+              new_l = clean_lines(new_s.get(a, []))
+
+              combined = sort_versions(dedupe(old_l + new_l))
+
+              if combined:
+                  merged_s[a] = combined
+                  merged_o.append(a)
+
+          merged = build(new_h, merged_s, merged_o, new_t or old_t)
+
+          rest = entries[2:]
+          result = merged
+
+          if rest:
+              result += '\n\n' + '\n\n'.join(e.strip() for e in rest)
+
+          result += '\n'
+
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(result)
+
+          print('✅ Changelog normalized: clean, squashed, deduplicated')
+          PYEOF
 
           git add debian/changelog
           if git diff --cached --quiet; then
@@ -468,6 +593,130 @@ jobs:
             --distribution=UNRELEASED \
             --newversion="${{ env.NORMALIZED_VERSION }}-1" \
             "New upstream release ${{ env.NORMALIZED_VERSION }}."
+
+          # Squash the top two changelog entries into one and remove WIP lines.
+          # Merges the new version entry with the previous entry, keeping all
+          # non-WIP user entries and combining all bot version entries.
+          python3 << 'PYEOF'
+          import re, sys
+
+          path = 'debian/changelog'
+          with open(path, encoding='utf-8') as f:
+              content = f.read().rstrip() + '\n'
+
+          header_re = re.compile(r'(?m)^\S+\s+\([^)]+\)\s+\S+;[^\n]*$')
+          matches = list(header_re.finditer(content))
+
+          if not matches:
+              print('❌ Failed to parse changelog')
+              sys.exit(1)
+
+          entries = []
+          for i, m in enumerate(matches):
+              start = m.start()
+              end = matches[i + 1].start() if i + 1 < len(matches) else len(content)
+              entries.append(content[start:end].strip())
+
+          if len(entries) < 2:
+              cleaned = re.sub(r'(?mi)^.*\b(WIP|TODO|FIXME)\b.*\n?', '', entries[0])
+              with open(path, 'w', encoding='utf-8') as f:
+                  f.write(cleaned.strip() + '\n')
+              print('ℹ️ Only one entry, sanitized')
+              sys.exit(0)
+
+          SECTION_RE = re.compile(r'^  \[ (.+?) \]\s*$', re.MULTILINE)
+
+          def parse_entry(text):
+              lines = text.splitlines()
+              header = lines[0]
+              trailer = next((l for l in reversed(lines) if l.startswith(' -- ')), None)
+
+              sections, order = {}, []
+              cur, buf = None, []
+
+              for line in lines[1:]:
+                  if line.startswith(' -- '):
+                      if cur:
+                          sections[cur] = buf
+                      break
+
+                  m = SECTION_RE.match(line)
+                  if m:
+                      if cur:
+                          sections[cur] = buf
+                      cur = m.group(1)
+                      order.append(cur)
+                      buf = []
+                  elif cur:
+                      buf.append(line)
+
+              return header, sections, order, trailer
+
+          def clean_lines(lines):
+              return [
+                  l for l in lines
+                  if l.strip() and not re.search(r'\b(WIP|TODO|FIXME)\b', l, re.I)
+              ]
+
+          def dedupe(lines):
+              seen, out = set(), []
+              for l in lines:
+                  if l not in seen:
+                      seen.add(l)
+                      out.append(l)
+              return out
+
+          def build(header, sections, order, trailer):
+              out = [header, '']
+              for a in order:
+                  lines = clean_lines(sections.get(a, []))
+                  if not lines:
+                      continue
+                  out.append(f'  [ {a} ]')
+                  out.extend(lines)
+                  out.append('')
+              if trailer:
+                  out.append(trailer)
+              return '\n'.join(out).rstrip()
+
+          new_h, new_s, new_o, new_t = parse_entry(entries[0])
+          old_h, old_s, old_o, old_t = parse_entry(entries[1])
+
+          merged_s, merged_o = {}, []
+
+          def sort_versions(lines):
+              def key(l):
+                  m = re.search(r'(\d+\.\d+\.\d+)', l)
+                  return (0, tuple(map(int, m.group(1).split('.')))) if m else (1, l)
+
+              return sorted(lines, key=key)
+
+          for a in list(old_o) + [x for x in new_o if x not in old_o]:
+              old_l = clean_lines(old_s.get(a, []))
+              new_l = clean_lines(new_s.get(a, []))
+
+              combined = sort_versions(dedupe(old_l + new_l))
+
+              if combined:
+                  merged_s[a] = combined
+                  merged_o.append(a)
+
+          merged = build(new_h, merged_s, merged_o, new_t or old_t)
+
+          rest = entries[2:]
+          result = merged
+
+          if rest:
+              result += '\n\n' + '\n\n'.join(e.strip() for e in rest)
+
+          result += '\n'
+
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(result)
+
+          print('✅ Changelog normalized: clean, squashed, deduplicated')
+          PYEOF
+
           git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
 
       - name: Push PR branch
