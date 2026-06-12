@@ -9,9 +9,14 @@ name: Promote New Upstream Version (Suites)
 # - promote-latest uses the standard reusable workflow for qcom/debian/latest.
 #   This also imports the upstream tag into upstream/latest and pushes it.
 # - post-promote-latest updates the changelog and enables auto-merge for the
-#   qcom/debian/latest PR, with rebase retry to handle concurrent base changes.
+#   qcom/debian/latest PR.
 # - promote-suites uses a matrix strategy to promote qcom/debian/trixie and
-#   qcom/ubuntu/resolute in parallel, eliminating code duplication.
+#   qcom/ubuntu/resolute in parallel.
+# - For each target branch, detect whether the new upstream tag is a no-op
+#   relative to the most recently promoted upstream tag already merged into
+#   that branch:
+#   - if no-op: update changelog/version only
+#   - if real upstream content changed: follow the normal branch logic
 
 on:
   workflow_dispatch:
@@ -30,7 +35,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: promote-upstream-suites-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+  group: promote-upstream-suites-${{ github.repository }}-${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
   cancel-in-progress: false
 
 jobs:
@@ -57,11 +62,13 @@ jobs:
   # - Ensures there is an OPEN PR for the latest branch:
   #   - if no PR exists, create one
   #   - if an old PR exists but is CLOSED, create a new one
-  # - Rebases PR branch onto latest base branch before enabling auto-merge,
-  #   reducing "Base branch was modified" failures.
+  # - Detects whether the new upstream tag is a no-op relative to the latest
+  #   upstream tag already merged into qcom/debian/latest.
+  # - If no-op, rebuild the PR branch from qcom/debian/latest and keep only the
+  #   changelog/version update.
+  # - If not no-op, preserve the reusable workflow merge history.
   # - Uses --match-head-commit to prevent merging a stale PR head.
-  # - Rebase is retried both in the initial rebase phase and inside the
-  #   auto-merge retry loop.
+  # - Leaves the PR open for manual resolution if a real rebase conflict occurs.
   # ─────────────────────────────────────────────────────────────────────────────
   post-promote-latest:
     needs: promote-latest
@@ -93,6 +100,8 @@ jobs:
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           PR_BRANCH="debian/pr/${NORMALIZED_VERSION}-1"
           DEFAULT_BASE_BRANCH="qcom/debian/latest"
+          NEW_UPSTREAM_TAG="upstream/${NORMALIZED_VERSION}"
+
           echo "ℹ️ PR branch: $PR_BRANCH"
 
           git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
@@ -112,8 +121,7 @@ jobs:
           done
           git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
-          # The reusable workflow writes "New upstream release" without version.
-          # Update it to include the version number for traceability.
+          # Update changelog entry to include the version number for traceability.
           sed -i "s/\* New upstream release$/\* New upstream release ${NORMALIZED_VERSION}./" debian/changelog
 
           git add debian/changelog
@@ -124,9 +132,6 @@ jobs:
           fi
 
           # Ensure an OPEN PR exists for this branch.
-          # Use gh pr list --state all --head to handle:
-          # - branch names containing slashes
-          # - closed PRs
           PR_STATE=""
           PR_NUMBER=""
           BASE_BRANCH="$DEFAULT_BASE_BRANCH"
@@ -170,7 +175,6 @@ jobs:
               --base "$DEFAULT_BASE_BRANCH" \
               --head "$PR_BRANCH"
 
-            # Wait for the new PR to become visible via API.
             PR_VISIBLE=false
             for i in 1 2 3 4 5; do
               PR_INFO=$(gh pr list \
@@ -206,11 +210,16 @@ jobs:
             fi
           fi
 
+          if [ -z "$PR_NUMBER" ]; then
+            echo "❌ Failed to resolve PR number"
+            exit 1
+          fi
+
           echo "ℹ️ Base branch: $BASE_BRANCH"
 
-          # Fetch base branch
+          # Fetch base branch and tags
           for i in 1 2 3; do
-            if git fetch origin "$BASE_BRANCH"; then
+            if git fetch origin "$BASE_BRANCH" --tags; then
               break
             fi
             if [ "$i" -eq 3 ]; then
@@ -221,32 +230,76 @@ jobs:
             sleep 5
           done
 
-          # ── Initial rebase (with retry) ──────────────────────────────────────
-          # No push before this rebase: the changelog commit will be included in
-          # the rebased branch and pushed once in the single push below.
-          for i in 1 2 3; do
+          # Per-branch no-op detection:
+          # compare the new upstream tag to the latest upstream tag already merged
+          # into qcom/debian/latest.
+          NOOP_UPSTREAM=false
+          PREV_UPSTREAM_TAG=$(
+            git tag --merged "origin/$BASE_BRANCH" 'upstream/*' --sort=-version:refname \
+              | grep -v "^${NEW_UPSTREAM_TAG}$" \
+              | head -n1 || true
+          )
+
+          if git rev-parse -q --verify "refs/tags/${NEW_UPSTREAM_TAG}" >/dev/null 2>&1 && \
+             [ -n "$PREV_UPSTREAM_TAG" ]; then
+            NEW_SHA=$(git rev-list -n1 "${NEW_UPSTREAM_TAG}")
+            PREV_SHA=$(git rev-list -n1 "${PREV_UPSTREAM_TAG}")
+
+            echo "ℹ️ Previous promoted upstream tag on $BASE_BRANCH: $PREV_UPSTREAM_TAG"
+            echo "ℹ️ New upstream tag: $NEW_UPSTREAM_TAG"
+            echo "ℹ️ Previous upstream SHA: $PREV_SHA"
+            echo "ℹ️ New upstream SHA: $NEW_SHA"
+
+            if [ "$NEW_SHA" = "$PREV_SHA" ]; then
+              NOOP_UPSTREAM=true
+              echo "✅ Detected no-op upstream tag on $BASE_BRANCH: same commit as previous promoted tag"
+            fi
+          else
+            echo "ℹ️ Could not determine previous upstream tag on $BASE_BRANCH; continuing with normal flow"
+          fi
+
+          if [ "$NOOP_UPSTREAM" = "true" ]; then
+            # Strategy 2 for latest:
+            # rebuild PR branch from latest base branch and keep only changelog update
+            echo "ℹ️ Rebuilding latest PR branch from base branch for changelog-only update"
+
+            git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+
+            # Preserve the current changelog content
+            cp debian/changelog /tmp/debian.changelog.preserved
+
+            # Recreate PR branch from latest base branch
+            git checkout -B "$PR_BRANCH" "origin/$BASE_BRANCH"
+
+            # Restore changelog and recommit if needed
+            cp /tmp/debian.changelog.preserved debian/changelog
+            git add debian/changelog
+
+            if git diff --cached --quiet; then
+              echo "ℹ️ No changelog delta to commit after branch rebuild"
+            else
+              git commit -s -m "debian: add version to changelog entry for traceability"
+            fi
+
+            git push --force-with-lease origin "$PR_BRANCH"
+          else
+            # Real upstream change:
+            # preserve reusable workflow history.
+            # Push the changelog update first so it is preserved even if rebase conflicts.
+            git push --force-with-lease origin "$PR_BRANCH"
+
+            echo "ℹ️ Rebasing latest PR branch onto base branch"
             if git rebase "origin/$BASE_BRANCH"; then
-              echo "✅ Rebase successful (attempt $i)"
-              break
+              echo "✅ Rebase successful"
+              git push --force-with-lease origin "$PR_BRANCH"
+            else
+              echo "⚠️ Rebase hit a real conflict; leaving PR open for manual resolution"
+              git rebase --abort || true
+              exit 0
             fi
-            echo "⚠️ Rebase failed (attempt $i), retrying..."
-            # After abort, the local branch is restored to its pre-rebase state
-            # (including the changelog commit). Only re-fetch the base branch to
-            # get the latest upstream changes; do NOT reset the local branch.
-            git rebase --abort || true
-            if [ "$i" -eq 3 ]; then
-              echo "❌ Rebase failed after 3 attempts"
-              exit 1
-            fi
-            git fetch origin "$BASE_BRANCH" || true
-            sleep 2
-          done
+          fi
 
-          git push --force-with-lease origin "$PR_BRANCH"
-
-          # ── Auto-merge (with retry + inner rebase retry) ─────────────────────
-          # --match-head-commit prevents GitHub from merging a stale head if
-          # someone pushes to the PR branch between our push and the merge.
+          # Enable auto-merge
           for i in 1 2 3; do
             HEAD_COMMIT=$(git rev-parse HEAD)
             echo "ℹ️ Enabling auto-merge (attempt $i, head: $HEAD_COMMIT)"
@@ -259,31 +312,17 @@ jobs:
             fi
 
             echo "⚠️ Auto-merge failed (attempt $i), refreshing branch..."
-            git fetch origin "$BASE_BRANCH" "$PR_BRANCH" || { echo "⚠️ fetch failed, skipping rebase for this round"; sleep 2; continue; }
+            git fetch origin "$BASE_BRANCH" "$PR_BRANCH" || { echo "⚠️ fetch failed, skipping this round"; sleep 2; continue; }
             git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
-            # Inner rebase retry
-            REBASE_OK=false
-            for j in 1 2 3; do
-              if git rebase "origin/$BASE_BRANCH"; then
-                echo "✅ Inner rebase successful (attempt $j)"
-                REBASE_OK=true
-                break
-              fi
-              echo "⚠️ Inner rebase failed (attempt $j), retrying..."
+            if git rebase "origin/$BASE_BRANCH"; then
+              git push --force-with-lease origin "$PR_BRANCH"
+            else
+              echo "⚠️ Rebase conflict during auto-merge retry; leaving PR open for manual resolution"
               git rebase --abort || true
-              git fetch origin "$BASE_BRANCH" "$PR_BRANCH" || { sleep 2; continue; }
-              git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
-              sleep 2
-            done
-
-            if [ "$REBASE_OK" = "false" ]; then
-              echo "⚠️ Inner rebase failed after 3 attempts, skipping push for this round"
-              sleep 2
-              continue
+              exit 0
             fi
 
-            git push --force-with-lease origin "$PR_BRANCH"
             sleep 2
           done
 
@@ -371,7 +410,7 @@ jobs:
           set -euo pipefail
           git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
           git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
-          git fetch origin "$DEBIAN_BRANCH"
+          git fetch origin "$DEBIAN_BRANCH" --tags
 
           # Safely checkout the debian branch using explicit remote tracking.
           git checkout -B "$DEBIAN_BRANCH" "origin/$DEBIAN_BRANCH"
@@ -383,9 +422,40 @@ jobs:
 
           git checkout -b "${{ env.PR_BRANCH }}"
 
-          if ! ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"; then
-            echo "❌ merge_debian_packaging_upstream failed for tag $UPSTREAM_TAG on branch $DEBIAN_BRANCH"
-            exit 1
+          NEW_UPSTREAM_TAG="upstream/${{ env.NORMALIZED_VERSION }}"
+          PREV_UPSTREAM_TAG=$(
+            git tag --merged "origin/$DEBIAN_BRANCH" 'upstream/*' --sort=-version:refname \
+              | grep -v "^${NEW_UPSTREAM_TAG}$" \
+              | head -n1 || true
+          )
+
+          NOOP_UPSTREAM=false
+
+          if git rev-parse -q --verify "refs/tags/${NEW_UPSTREAM_TAG}" >/dev/null 2>&1 && \
+             [ -n "$PREV_UPSTREAM_TAG" ]; then
+            NEW_SHA=$(git rev-list -n1 "${NEW_UPSTREAM_TAG}")
+            PREV_SHA=$(git rev-list -n1 "${PREV_UPSTREAM_TAG}")
+
+            echo "ℹ️ Previous promoted upstream tag on $DEBIAN_BRANCH: $PREV_UPSTREAM_TAG"
+            echo "ℹ️ New upstream tag: $NEW_UPSTREAM_TAG"
+            echo "ℹ️ Previous upstream SHA: $PREV_SHA"
+            echo "ℹ️ New upstream SHA: $NEW_SHA"
+
+            if [ "$NEW_SHA" = "$PREV_SHA" ]; then
+              NOOP_UPSTREAM=true
+              echo "✅ Detected no-op upstream tag for $DEBIAN_BRANCH"
+            fi
+          else
+            echo "ℹ️ Could not determine previous upstream tag on $DEBIAN_BRANCH; treating as normal promotion"
+          fi
+
+          if [ "$NOOP_UPSTREAM" = "true" ]; then
+            echo "ℹ️ No upstream content change detected; keeping PR branch as changelog-only for $DEBIAN_BRANCH"
+          else
+            if ! ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"; then
+              echo "❌ merge_debian_packaging_upstream failed for tag $UPSTREAM_TAG on branch $DEBIAN_BRANCH"
+              exit 1
+            fi
           fi
 
       - name: Promote changelog
@@ -410,7 +480,6 @@ jobs:
         working-directory: ./package-repo
         run: |
           set -euo pipefail
-          # Use gh pr list --head instead of gh pr view to handle branch names with slashes.
           PR_INFO=$(gh pr list \
             --repo "${{ github.repository }}" \
             --head "${{ env.PR_BRANCH }}" \
@@ -433,7 +502,6 @@ jobs:
               --base "$DEBIAN_BRANCH" \
               --head "${{ env.PR_BRANCH }}"
 
-            # Wait for PR to be visible via API (GitHub may have a short propagation delay).
             PR_VISIBLE=false
             for i in 1 2 3 4 5; do
               PR_INFO=$(gh pr list \
@@ -458,6 +526,12 @@ jobs:
               exit 1
             fi
           fi
+
+          if [ -z "$PR_NUMBER" ]; then
+            echo "❌ Failed to resolve PR number"
+            exit 1
+          fi
+
           echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
 
       - name: Enable auto-merge when supported
