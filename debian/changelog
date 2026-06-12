@@ -1,4 +1,4 @@
-iris-vpu (1.0.17-1) UNRELEASED; urgency=medium
+iris-vpu (1.0.18-1) UNRELEASED; urgency=medium
 
   * Initial Debian release.
   * Package iris-vpu-dkms: DKMS package for MSM VIDC video driver (out-of-tree).
@@ -7,5 +7,6 @@ iris-vpu (1.0.17-1) UNRELEASED; urgency=medium
 
   [ GitHub Service Bot ]
   * New upstream release 1.0.17
+  * New upstream release 1.0.18.
 
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Wed, 10 Jun 2026 08:43:04 +0000
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Fri, 12 Jun 2026 04:35:55 +0000
