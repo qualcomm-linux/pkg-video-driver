@@ -1,17 +1,17 @@
 name: Promote New Upstream Version (Suites)
-description: |
-  Promote a new upstream version to all Debian/Ubuntu packaging suites simultaneously.
-  Covers: qcom/debian/latest (unstable), qcom/debian/trixie, qcom/ubuntu/resolute.
-  Can be triggered manually via workflow_dispatch, or automatically via
-  repository_dispatch from the upstream video-driver repository when a new tag is pushed.
 
-  Architecture:
-  - promote-latest uses the standard reusable workflow for qcom/debian/latest.
-    This also imports the upstream tag into upstream/latest and pushes it.
-  - post-promote-latest updates the changelog and enables auto-merge for the
-    qcom/debian/latest PR, with rebase retry to handle concurrent base changes.
-  - promote-suites uses a matrix strategy to promote qcom/debian/trixie and
-    qcom/ubuntu/resolute in parallel, eliminating code duplication.
+# Promote a new upstream version to all Debian/Ubuntu packaging suites simultaneously.
+# Covers: qcom/debian/latest (unstable), qcom/debian/trixie, qcom/ubuntu/resolute.
+# Can be triggered manually via workflow_dispatch, or automatically via
+# repository_dispatch from the upstream video-driver repository when a new tag is pushed.
+#
+# Architecture:
+# - promote-latest uses the standard reusable workflow for qcom/debian/latest.
+#   This also imports the upstream tag into upstream/latest and pushes it.
+# - post-promote-latest updates the changelog and enables auto-merge for the
+#   qcom/debian/latest PR, with rebase retry to handle concurrent base changes.
+# - promote-suites uses a matrix strategy to promote qcom/debian/trixie and
+#   qcom/ubuntu/resolute in parallel, eliminating code duplication.
 
 on:
   workflow_dispatch:
@@ -34,7 +34,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
   # ─────────────────────────────────────────────────────────────────────────────
   # Step 1: Promote qcom/debian/latest via the standard reusable workflow.
   # This job also handles importing the upstream tag into upstream/latest and
@@ -55,6 +54,9 @@ jobs:
   # promote-latest.
   #
   # - Updates changelog entry to include the version number for traceability.
+  # - Ensures there is an OPEN PR for the latest branch:
+  #   - if no PR exists, create one
+  #   - if an old PR exists but is CLOSED, create a new one
   # - Rebases PR branch onto latest base branch before enabling auto-merge,
   #   reducing "Base branch was modified" failures.
   # - Uses --match-head-commit to prevent merging a stale PR head.
@@ -90,24 +92,23 @@ jobs:
 
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           PR_BRANCH="debian/pr/${NORMALIZED_VERSION}-1"
+          DEFAULT_BASE_BRANCH="qcom/debian/latest"
           echo "ℹ️ PR branch: $PR_BRANCH"
 
           git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
           git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
 
           # Fetch and checkout PR branch safely using explicit remote tracking.
-          # Retry to handle transient network issues or race conditions where
-          # promote-latest has just pushed the branch.
           for i in 1 2 3; do
             if git fetch origin "$PR_BRANCH"; then
               break
             fi
-            echo "⚠️ git fetch origin $PR_BRANCH failed (attempt $i), retrying in 5s..."
-            sleep 5
             if [ "$i" -eq 3 ]; then
               echo "❌ git fetch origin $PR_BRANCH failed after 3 attempts"
               exit 1
             fi
+            echo "⚠️ git fetch origin $PR_BRANCH failed (attempt $i), retrying in 5s..."
+            sleep 5
           done
           git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
@@ -122,29 +123,103 @@ jobs:
             git commit -s -m "debian: add version to changelog entry for traceability"
           fi
 
-          # Ensure the PR exists before proceeding (with retry for propagation delay).
-          PR_FOUND=false
-          for _i in 1 2 3 4 5; do
-            if gh pr view "$PR_BRANCH" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-              PR_FOUND=true
+          # Ensure an OPEN PR exists for this branch.
+          # Use gh pr list --state all --head to handle:
+          # - branch names containing slashes
+          # - closed PRs
+          PR_STATE=""
+          PR_NUMBER=""
+          BASE_BRANCH="$DEFAULT_BASE_BRANCH"
+
+          for i in 1 2 3 4 5; do
+            PR_INFO=$(gh pr list \
+              --repo "${{ github.repository }}" \
+              --head "$PR_BRANCH" \
+              --state all \
+              --json state,baseRefName,number \
+              --jq '.[0] // empty' 2>/dev/null || true)
+
+            PR_STATE=$(echo "$PR_INFO" | jq -r '.state // empty')
+            PR_BASE=$(echo "$PR_INFO" | jq -r '.baseRefName // empty')
+            PR_NUM=$(echo "$PR_INFO" | jq -r '.number // empty')
+
+            if [ -n "$PR_STATE" ]; then
+              echo "✅ PR found (state: $PR_STATE, attempt $i)"
+              if [ -n "$PR_BASE" ]; then
+                BASE_BRANCH="$PR_BASE"
+              fi
+              if [ -n "$PR_NUM" ]; then
+                PR_NUMBER="$PR_NUM"
+              fi
               break
             fi
-            echo "⚠️ PR not found yet (attempt $_i), waiting 5s..."
+
+            echo "⚠️ PR not found yet (attempt $i), waiting 5s..."
             sleep 5
           done
-          if [ "$PR_FOUND" = "false" ]; then
-            echo "❌ PR not found for branch $PR_BRANCH after retries"
-            exit 1
+
+          if [ "$PR_STATE" = "OPEN" ]; then
+            echo "ℹ️ Using existing OPEN PR (base: $BASE_BRANCH)"
+          else
+            echo "⚠️ PR is not OPEN (state: ${PR_STATE:-NONE}), creating a new PR"
+
+            gh pr create \
+              --repo "${{ github.repository }}" \
+              --title "Promotion to ${NORMALIZED_VERSION}" \
+              --body "Automated promotion of upstream version ${NORMALIZED_VERSION} (tag: \`${UPSTREAM_TAG}\`) to branch \`${DEFAULT_BASE_BRANCH}\`." \
+              --base "$DEFAULT_BASE_BRANCH" \
+              --head "$PR_BRANCH"
+
+            # Wait for the new PR to become visible via API.
+            PR_VISIBLE=false
+            for i in 1 2 3 4 5; do
+              PR_INFO=$(gh pr list \
+                --repo "${{ github.repository }}" \
+                --head "$PR_BRANCH" \
+                --state open \
+                --json state,baseRefName,number \
+                --jq '.[0] // empty' 2>/dev/null || true)
+
+              PR_STATE=$(echo "$PR_INFO" | jq -r '.state // empty')
+              PR_BASE=$(echo "$PR_INFO" | jq -r '.baseRefName // empty')
+              PR_NUM=$(echo "$PR_INFO" | jq -r '.number // empty')
+
+              if [ "$PR_STATE" = "OPEN" ]; then
+                PR_VISIBLE=true
+                if [ -n "$PR_BASE" ]; then
+                  BASE_BRANCH="$PR_BASE"
+                fi
+                if [ -n "$PR_NUM" ]; then
+                  PR_NUMBER="$PR_NUM"
+                fi
+                echo "✅ Newly created PR is now visible (attempt $i)"
+                break
+              fi
+
+              echo "⚠️ Newly created PR not visible yet (attempt $i), waiting 5s..."
+              sleep 5
+            done
+
+            if [ "$PR_VISIBLE" = "false" ]; then
+              echo "❌ New PR was created but is still not visible after retries"
+              exit 1
+            fi
           fi
 
-          # Resolve PR base branch dynamically.
-          BASE_BRANCH=$(gh pr view "$PR_BRANCH" \
-            --repo "${{ github.repository }}" \
-            --json baseRefName \
-            --jq '.baseRefName')
           echo "ℹ️ Base branch: $BASE_BRANCH"
 
-          git fetch origin "$BASE_BRANCH"
+          # Fetch base branch
+          for i in 1 2 3; do
+            if git fetch origin "$BASE_BRANCH"; then
+              break
+            fi
+            if [ "$i" -eq 3 ]; then
+              echo "❌ git fetch origin $BASE_BRANCH failed after 3 attempts"
+              exit 1
+            fi
+            echo "⚠️ git fetch origin $BASE_BRANCH failed (attempt $i), retrying in 5s..."
+            sleep 5
+          done
 
           # ── Initial rebase (with retry) ──────────────────────────────────────
           # No push before this rebase: the changelog commit will be included in
@@ -159,12 +234,12 @@ jobs:
             # (including the changelog commit). Only re-fetch the base branch to
             # get the latest upstream changes; do NOT reset the local branch.
             git rebase --abort || true
-            git fetch origin "$BASE_BRANCH"
-            sleep 2
             if [ "$i" -eq 3 ]; then
               echo "❌ Rebase failed after 3 attempts"
               exit 1
             fi
+            git fetch origin "$BASE_BRANCH" || true
+            sleep 2
           done
 
           git push --force-with-lease origin "$PR_BRANCH"
@@ -175,7 +250,7 @@ jobs:
           for i in 1 2 3; do
             HEAD_COMMIT=$(git rev-parse HEAD)
             echo "ℹ️ Enabling auto-merge (attempt $i, head: $HEAD_COMMIT)"
-            if gh pr merge "$PR_BRANCH" \
+            if gh pr merge "$PR_NUMBER" \
               --repo "${{ github.repository }}" \
               --auto --merge \
               --match-head-commit "$HEAD_COMMIT"; then
@@ -184,7 +259,7 @@ jobs:
             fi
 
             echo "⚠️ Auto-merge failed (attempt $i), refreshing branch..."
-            git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+            git fetch origin "$BASE_BRANCH" "$PR_BRANCH" || { echo "⚠️ fetch failed, skipping rebase for this round"; sleep 2; continue; }
             git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
 
             # Inner rebase retry
@@ -197,7 +272,7 @@ jobs:
               fi
               echo "⚠️ Inner rebase failed (attempt $j), retrying..."
               git rebase --abort || true
-              git fetch origin "$BASE_BRANCH" "$PR_BRANCH"
+              git fetch origin "$BASE_BRANCH" "$PR_BRANCH" || { sleep 2; continue; }
               git checkout -B "$PR_BRANCH" "origin/$PR_BRANCH"
               sleep 2
             done
@@ -213,9 +288,10 @@ jobs:
           done
 
           echo "⚠️ Failed to enable auto-merge after retries, leaving PR open for manual merge"
+          exit 0
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in PARALLEL
+  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in parallel
   # after promote-latest completes.
   #
   # A matrix strategy replaces the former promote-trixie / promote-resolute
@@ -334,13 +410,20 @@ jobs:
         working-directory: ./package-repo
         run: |
           set -euo pipefail
-          PR_STATE=$(gh pr view "${{ env.PR_BRANCH }}" \
+          # Use gh pr list --head instead of gh pr view to handle branch names with slashes.
+          PR_INFO=$(gh pr list \
             --repo "${{ github.repository }}" \
-            --json state --jq '.state' 2>/dev/null || echo "NOT_FOUND")
+            --head "${{ env.PR_BRANCH }}" \
+            --state all \
+            --json state,number \
+            --jq '.[0] // empty' 2>/dev/null || true)
+          PR_STATE=$(echo "$PR_INFO" | jq -r '.state // empty')
+          PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number // empty')
+
           if [ "$PR_STATE" = "OPEN" ]; then
-            echo "ℹ️ PR already exists and is open for branch ${{ env.PR_BRANCH }}"
+            echo "ℹ️ PR already exists and is open for branch ${{ env.PR_BRANCH }} (#${PR_NUMBER})"
           else
-            if [ "$PR_STATE" != "NOT_FOUND" ]; then
+            if [ -n "$PR_STATE" ]; then
               echo "ℹ️ Previous PR for branch ${{ env.PR_BRANCH }} is $PR_STATE, creating a new one"
             fi
             gh pr create \
@@ -351,22 +434,38 @@ jobs:
               --head "${{ env.PR_BRANCH }}"
 
             # Wait for PR to be visible via API (GitHub may have a short propagation delay).
+            PR_VISIBLE=false
             for i in 1 2 3 4 5; do
-              if gh pr view "${{ env.PR_BRANCH }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-                echo "✅ PR is now visible"
+              PR_INFO=$(gh pr list \
+                --repo "${{ github.repository }}" \
+                --head "${{ env.PR_BRANCH }}" \
+                --state open \
+                --json state,number \
+                --jq '.[0] // empty' 2>/dev/null || true)
+              PR_STATE=$(echo "$PR_INFO" | jq -r '.state // empty')
+              PR_NUMBER=$(echo "$PR_INFO" | jq -r '.number // empty')
+              if [ "$PR_STATE" = "OPEN" ]; then
+                echo "✅ PR is now visible (#${PR_NUMBER})"
+                PR_VISIBLE=true
                 break
               fi
               echo "⚠️ PR not visible yet (attempt $i), waiting 5s..."
               sleep 5
             done
+
+            if [ "$PR_VISIBLE" = "false" ]; then
+              echo "❌ PR was created but is still not visible after retries"
+              exit 1
+            fi
           fi
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
 
       - name: Enable auto-merge when supported
         working-directory: ./package-repo
         run: |
           HEAD_COMMIT=$(git rev-parse HEAD)
           set +e
-          gh pr merge "${{ env.PR_BRANCH }}" \
+          gh pr merge "${{ env.PR_NUMBER }}" \
             --repo "${{ github.repository }}" \
             --auto --merge \
             --match-head-commit "$HEAD_COMMIT"
