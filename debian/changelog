@@ -1,4 +1,4 @@
-iris-vpu (1.0.19-3) UNRELEASED; urgency=medium
+iris-vpu (1.0.19-3) resolute; urgency=medium
 
   [ Renjiang Han ]
   * Initial Debian release.
@@ -10,4 +10,4 @@ iris-vpu (1.0.19-3) UNRELEASED; urgency=medium
   * New upstream release 1.0.18.
   * New upstream release 1.0.19.
 
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Mon, 15 Jun 2026 09:53:56 +0000
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Thu, 18 Jun 2026 03:46:06 +0000
