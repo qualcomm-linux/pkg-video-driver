@@ -1,6 +1,8 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: video-driver
 Source: https://github.com/qualcomm-linux/video-driver
+Files-Excluded:
+ pkg-iris-vpu
 
 Files: *
 Copyright: Qualcomm Technologies, Inc. and/or its subsidiaries.
