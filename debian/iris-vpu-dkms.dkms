@@ -3,7 +3,7 @@ PACKAGE_VERSION="#MODULE_VERSION#"
 
 # Build iris_vpu module only
 BUILT_MODULE_NAME[0]="iris_vpu"
-BUILT_MODULE_LOCATION[0]="."
+BUILT_MODULE_LOCATION[0]="video/"
 DEST_MODULE_LOCATION[0]="/extra/dkms"
 
 MAKE[0]="make KERNEL_SRC=${kernel_source_dir}"
