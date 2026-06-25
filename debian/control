@@ -1,6 +1,8 @@
 Source: iris-vpu
 Section: kernel
-Maintainer: Renjiang Han <renjiang@qti.qualcomm.com>
+Maintainer: Maintainers.pkg-video-driver <Maintainers.pkg-video-driver@qualcomm.com>
+Uploaders:
+ Renjiang Han <renjiang@qti.qualcomm.com>,
 Build-Depends:
  cpio,
  debhelper-compat (= 13),
