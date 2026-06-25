@@ -1,0 +1,4 @@
+# dh_installmodules install in /usr/lib only from dh-compat=14, which is not
+# available in forky nor trixie right now. Instead of having it install files
+# in /etc/modprobe.d/, install it manually in /usr/lib/modprobe.d/.
+dh-install-instead-of-dh-installmodules
