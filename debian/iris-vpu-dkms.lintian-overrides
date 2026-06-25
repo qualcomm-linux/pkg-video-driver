@@ -1,0 +1,3 @@
+# Repetition of "src" is from upstream using an src directory and
+# is acceptable.
+repeated-path-segment src [*]
