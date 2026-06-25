@@ -3,7 +3,6 @@ Section: kernel
 Maintainer: Maintainers.pkg-video-driver <Maintainers.pkg-video-driver@qualcomm.com>
 Uploaders:
  Agathe Porte <agathe.porte@oss.qualcomm.com>,
- Renjiang Han <renjiang@qti.qualcomm.com>,
 Build-Depends:
  cpio,
  debhelper-compat (= 13),
