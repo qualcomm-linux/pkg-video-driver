@@ -2,3 +2,4 @@ Version: 5
 
 Template: GitHub
 Dist: https://github.com/qualcomm-linux/video-driver
+Dversion-Mangle: auto
