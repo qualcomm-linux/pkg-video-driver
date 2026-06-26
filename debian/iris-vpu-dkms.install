@@ -1,1 +1,2 @@
 debian/modprobe.d/iris-vpu-dkms.conf usr/lib/modprobe.d
+debian/iris-vpu-load.sh usr/libexec/iris-vpu-dkms

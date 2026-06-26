@@ -5,7 +5,7 @@ After=local-fs.target systemd-modules-load.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/lib/iris-vpu-dkms/iris-vpu-load.sh
+ExecStart=/usr/libexec/iris-vpu-dkms/iris-vpu-load.sh
 
 [Install]
 WantedBy=multi-user.target
