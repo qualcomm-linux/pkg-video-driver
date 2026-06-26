@@ -1,0 +1,33 @@
+From 0f2d59c46b044ed55f0ff4aa506fe614141dc869 Mon Sep 17 00:00:00 2001
+From: Agathe Porte <agathe.porte@oss.qualcomm.com>
+Date: Fri, 26 Jun 2026 09:39:22 +0200
+Subject: [PATCH 2/2] Makefile: use $(CURDIR) instead of $(shell pwd)
+
+Makefiles already have a native way of getting the current working
+directory. Use that instead of calling a subshell just to get the
+current working directory.
+
+Signed-off-by: Agathe Porte <agathe.porte@oss.qualcomm.com>
+---
+ Makefile | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 8e824d3c..5ba88bcc 100644
+--- a/Makefile
++++ b/Makefile
+@@ -3,9 +3,9 @@
+ $(info CONFIG_MSM_VIDC_ANDROID=$(CONFIG_MSM_VIDC_ANDROID))
+ 
+ ifneq ($(CONFIG_MSM_VIDC_ANDROID), m)
+-M := $(shell pwd)
++M := $(CURDIR)
+ KBUILD_OPTIONS += VIDEO_ROOT=$(M)
+-VIDEO_ROOT := $(shell pwd)
++VIDEO_ROOT := $(CURDIR)
+ endif
+ 
+ VIDEO_COMPILE_TIME = $(shell date)
+-- 
+2.53.0
+

@@ -1,0 +1,44 @@
+From 145ae8bba856d221abf811d45ff3917b2f1b3654 Mon Sep 17 00:00:00 2001
+From: Agathe Porte <agathe.porte@oss.qualcomm.com>
+Date: Fri, 26 Jun 2026 09:37:29 +0200
+Subject: [PATCH 1/2] Fix `all` target in Makefile
+
+The `all` target only has a dependency to the `modules` target, so DKMS
+*does not* call another make instance but directly run the modules
+target. This seem to results a `make all` call to be performed in the
+build tree, which tries to build a full vmlinux without success:
+
+> make -C /lib/modules/7.0.13+deb14-rt-arm64/build M=/var/lib/dkms/iris-vpu/1.0.19+ds/build all VIDEO_ROOT=/var/lib/dkms/iris-vpu/1.0.19+ds/build
+> make[1]: Entering directory '/usr/src/linux-headers-7.0.13+deb14-rt-arm64'
+> make[2]: Entering directory '/var/lib/dkms/iris-vpu/1.0.19+ds/build'
+> make[3]: *** No rule to make target 'vmlinux', needed by 'all'.  Stop.
+> make[2]: *** [/usr/src/linux-headers-7.0.13+deb14-common/Makefile:260: __sub-make] Error 2
+> make[2]: Leaving directory '/var/lib/dkms/iris-vpu/1.0.19+ds/build'
+> make[1]: *** [/usr/src/linux-headers-7.0.13+deb14-common/Makefile:260: __sub-make] Error 2
+> make[1]: Leaving directory '/usr/src/linux-headers-7.0.13+deb14-rt-arm64'
+> make: *** [Makefile:40: all] Error 2
+
+Use a submake in the `all` target to prevent this behavior.
+
+Signed-off-by: Agathe Porte <agathe.porte@oss.qualcomm.com>
+---
+ Makefile | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 042d2bc9..8e824d3c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -13,7 +13,8 @@ VIDEO_COMPILE_BY = $(shell echo $(USER))
+ VIDEO_COMPILE_HOST = $(shell uname -n)
+ VIDEO_GEN_PATH = $(VIDEO_ROOT)/driver/vidc/inc/video_generated_h
+ 
+-all: modules
++all:
++	$(MAKE) -C $(KERNEL_SRC) M=$(M) modules $(KBUILD_OPTIONS)
+ 
+ $(VIDEO_GEN_PATH): $(shell find . -type f \( -iname \*.c -o -iname \*.h -o -iname \*.mk \))
+ 	echo '#define VIDEO_COMPILE_TIME "$(VIDEO_COMPILE_TIME)"' > $(VIDEO_GEN_PATH)
+-- 
+2.53.0
+
