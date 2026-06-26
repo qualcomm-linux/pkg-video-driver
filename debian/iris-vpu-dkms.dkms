@@ -14,5 +14,3 @@ AUTOINSTALL="yes"
 # Configuration for custom kernels - minimal changes to fix apport error
 # Disable apport error reporting system for custom kernels
 NO_WEAK_MODULES="yes"
-# Skip initrd regeneration to avoid issues
-REMAKE_INITRD="no"
