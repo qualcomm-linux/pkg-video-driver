@@ -1,5 +1,6 @@
-iris-vpu-dkms (1.0.19+ds-0qli1~) UNRELEASED; urgency=medium
+iris-vpu-dkms (1.0.19+ds-0qli1) forky; urgency=medium
 
+  [ Agathe Porte ]
   * Initial release
 
- -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Wed, 24 Jun 2026 14:37:30 +0200
+ -- root <root@4d1ccd7e8cac>  Wed, 01 Jul 2026 12:57:59 +0000
