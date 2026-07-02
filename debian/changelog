@@ -1,8 +1,9 @@
-iris-vpu-dkms (1.0.19+ds-0qli2~bpo13+1~) trixie; urgency=medium
+iris-vpu-dkms (1.0.19+ds-0qli3) forky; urgency=medium
 
-  * Rebuild for trixie.
+  [ Agathe Porte ]
+  * Add debian/source/options to ignore .github
 
- -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Thu, 02 Jul 2026 11:43:22 +0200
+ -- root <root@bfb2bf56acc7>  Thu, 02 Jul 2026 09:52:52 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli2) forky; urgency=medium
 
