@@ -1,0 +1,2 @@
+0001-Fix-all-target-in-Makefile.patch
+0002-Makefile-use-CURDIR-instead-of-shell-pwd.patch

@@ -1,0 +1,21 @@
+PACKAGE_NAME="iris-vpu"
+PACKAGE_VERSION="#MODULE_VERSION#"
+
+# Build iris_vpu module only
+BUILT_MODULE_NAME[0]="iris_vpu"
+BUILT_MODULE_LOCATION[0]="video/"
+DEST_MODULE_LOCATION[0]="/extra/dkms"
+
+MAKE[0]="make KERNEL_SRC=${kernel_source_dir}"
+CLEAN="make KERNEL_SRC=${kernel_source_dir} clean"
+
+AUTOINSTALL="yes"
+
+# Configuration for custom kernels - minimal changes to fix apport error
+# Disable apport error reporting system for custom kernels
+NO_WEAK_MODULES="yes"
+
+# CONFIG_V4L2_MEM2MEM_DEV: v4l2_m2m_init v4l2_m2m_job_finish v4l2_m2m_ctx_release
+# CONFIG_VIDEOBUF2_V4L2: vb2_queue_init vb2_streamoff vb2_queue_release
+# CONFIG_VIDEO_DEV: v4l2_fh_exit v4l2_fh_del video_ioctl2 v4l2_fh_add
+BUILD_EXCLUSIVE_CONFIG="CONFIG_V4L2_MEM2MEM_DEV CONFIG_VIDEOBUF2_V4L2 CONFIG_VIDEO_DEV"

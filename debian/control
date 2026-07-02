@@ -1,25 +1,35 @@
-Source: iris-vpu
+Source: iris-vpu-dkms
 Section: kernel
-Priority: optional
-Maintainer: Renjiang Han <renjiang@qti.qualcomm.com>
-Build-Depends: debhelper-compat (= 13), dh-sequence-dkms
-Rules-Requires-Root: no
-Standards-Version: 4.7.2
+Maintainer: Maintainers.pkg-video-driver <Maintainers.pkg-video-driver@qualcomm.com>
+Uploaders:
+ Agathe Porte <agathe.porte@oss.qualcomm.com>,
+Build-Depends:
+ cpio,
+ debhelper-compat (= 13),
+ dh-sequence-dkms,
+Standards-Version: 4.7.4
+Vcs-Browser: https://github.com/qualcomm-linux/pkg-video-driver
+Vcs-Git: https://github.com/qualcomm-linux/pkg-video-driver.git
 Homepage: https://github.com/qualcomm-linux/video-driver
 
 Package: iris-vpu-dkms
 Architecture: all
-Depends: dkms (>= 2.6), kmod, ${misc:Depends}
-Conflicts: qcom-iris-dkms
-Description: DKMS package for MSM VIDC driver (out-of-tree)
- This package installs source for the 'video' kernel module and builds
- it via DKMS on the target machine using /lib/modules/${kernelver}/build.
+Depends:
+ dkms (>= 2.6),
+ kmod,
+ ${misc:Depends},
+Conflicts:
+ qcom-iris-dkms,
+Description: MSM VIDC driver (DKMS)
+ This package contains the source code of Video driver for VPUs. Required to
+ use VPU hardware on Qualcomm Snapdragon targets.
  .
- DKMS packaging for MSM VIDC driver (out-of-tree).
- Build occurs on install via /lib/modules/${kernelver}/build.
- .
- The driver supports multiple platforms and automatically detects the
- platform from device tree compatible string to enable appropriate
- configuration macros.
+ VPU is a multi pipe based hardware that offloads video stream decoding from
+ the application processor (AP). It supports H.264, H265, VP9, AV1 decoding and
+ H264, H265 encoding. The AP communicates with hardware through a well defined
+ protocol, called as host firmware interface (HFI), which provides fine-grained
+ and asynchronous control over individual hardware features.
  .
  Supported platforms: hamoa, lemans.
+ .
+ This package contains the source code for the iris_vpu kernel module.
