@@ -1,8 +1,8 @@
 iris-vpu-dkms (1.0.19+ds-0qli3~) UNRELEASED; urgency=medium
 
-  * Unreleased changes
+  * Add debian/source/options to ignore .github
 
- -- root <root@4af994ec9a1b>  Thu, 02 Jul 2026 09:39:15 +0000
+ -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Thu, 02 Jul 2026 11:51:13 +0200
 
 iris-vpu-dkms (1.0.19+ds-0qli2) forky; urgency=medium
 
