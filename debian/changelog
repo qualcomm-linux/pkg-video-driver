@@ -1,3 +1,9 @@
+iris-vpu-dkms (1.0.19+ds-0qli3~bpo13+1~) UNRELEASED; urgency=medium
+
+  * Rebuild for trixie.
+
+ -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Thu, 02 Jul 2026 11:58:14 +0200
+
 iris-vpu-dkms (1.0.19+ds-0qli3) forky; urgency=medium
 
   [ Agathe Porte ]
