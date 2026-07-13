@@ -1,0 +1,1 @@
+debian/modprobe.d/iris-vpu-dkms.conf usr/lib/modprobe.d

@@ -4,33 +4,21 @@
 
 include /usr/share/dpkg/pkg-info.mk
 
+DEST_SRC = debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)
+
 %:
 	dh $@
 
 override_dh_dkms:
-	# Suppress dh_dkms: we manage DKMS manually in postinst/prerm/postrm.
-	# dh_dkms (injected via dh-sequence-dkms in Build-Depends) would install
-	# debian/iris-vpu-dkms.dkms with a literal #MODULE_VERSION# placeholder,
-	# causing the DKMS trigger to fail with "iris-vpu/#MODULE_VERSION#".
+	dh_dkms -V
 
-override_dh_install:
-	mkdir -p debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)
-	# Install dkms.conf with correct version (dh_dkms cannot reliably replace #MODULE_VERSION#)
-	sed "s/PACKAGE_VERSION=\"[^\"]*\"/PACKAGE_VERSION=\"$(DEB_VERSION_UPSTREAM)\"/" \
-	    pkg-iris-vpu/dkms.conf > debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/dkms.conf
-	# Install only necessary source files for DKMS build
-	cp Makefile debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp Kbuild debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r driver debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r video debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r include debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r config debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	cp -r pkg-iris-vpu/scripts debian/iris-vpu-dkms/usr/src/iris-vpu-$(DEB_VERSION_UPSTREAM)/
-	# Install modprobe blacklist to /usr/lib/modprobe.d/ (package-managed, included in initramfs)
-	mkdir -p debian/iris-vpu-dkms/usr/lib/modprobe.d
-	install -m 644 debian/modprobe.d/iris-vpu-dkms.conf debian/iris-vpu-dkms/usr/lib/modprobe.d/iris-vpu-dkms.conf
-	# Install load script (service file handled by dh_installsystemd)
-	mkdir -p debian/iris-vpu-dkms/usr/lib/iris-vpu-dkms
-	install -m 755 debian/iris-vpu-load.sh debian/iris-vpu-dkms/usr/lib/iris-vpu-dkms/iris-vpu-load.sh
+execute_after_dh_install:
+	mkdir -p $(DEST_SRC)
+	cp debian/dkms-Makefile $(DEST_SRC)/Makefile
+	cp Kbuild $(DEST_SRC)/
+	cp -r driver $(DEST_SRC)/
+	cp -r video $(DEST_SRC)/
+	cp -r include $(DEST_SRC)/
+	cp -r config $(DEST_SRC)/
 
 override_dh_auto_clean override_dh_auto_build override_dh_auto_test override_dh_auto_install:
