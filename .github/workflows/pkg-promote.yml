@@ -5,7 +5,7 @@ on:
     inputs:
 
       debian-branch:
-        description: The debian branch to apply the promotion to. For example branch "qcom/debian/latest"
+        description: The debian branch to apply the promotion to. For example branch "qli/debian/latest"
         type: string
         required: true
 

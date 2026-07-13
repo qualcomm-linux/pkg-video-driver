@@ -7,10 +7,10 @@ on:
     inputs:
 
       debian-ref:
-        description: The debian ref to build. For example branch "qcom/debian/latest" or tag "debian/1.0.0-1"
+        description: The debian ref to build. For example branch "qli/debian/latest" or tag "debian/1.0.0-1"
         type: string
         required: true
-        default: qcom/debian/latest
+        default: qli/debian/latest
 
       force-docker-build:
         description: Force local pkg-builder instead of Debusine for Debian-family suites
