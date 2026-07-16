@@ -7,25 +7,10 @@ on:
   workflow_dispatch:
     inputs:
 
-      suite:
-        description: The distribution codename or Debian suite to release for. Ex noble, questing, resolute, trixie, bookworm, sid, unstable
-        type: choice
-        default: noble
-        options:
-          - noble
-          - questing
-          - resolute
-          - unstable
-          - forky
-          - trixie
-          - bookworm
-          - sid
-
       debian-branch:
-        description: The debian branch to use to execute the release from. For example branch "qcom/debian/latest"
+        description: The debian branch to release. For example branch "qli/debian/trixie"
         type: string
-        required: false
-        default: qcom/debian/latest
+        required: true
 
       test-run:
         description: |
@@ -41,10 +26,9 @@ permissions:
 jobs:
   release:
 
-    uses: qualcomm-linux/qcom-build-utils/.github/workflows/qcom-release-reusable-workflow.yml@main
+    uses: qualcomm-linux/qcom-build-utils/.github/workflows/pkg-release-reusable-workflow.yml@main
     with:
       qcom-build-utils-ref: main
-      suite: ${{ github.event.inputs.suite }}
       debian-branch: ${{ github.event.inputs.debian-branch }}
       test-run: ${{ github.event.inputs.test-run == 'true' && true || false }}
       debusine-parent-workspace: ${{ vars.DEBUSINE_PARENT_WORKSPACE }}
