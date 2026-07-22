@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# DKMS-safe wrapper Makefile for the packaged source tree.
+
+KERNEL_SRC ?= /lib/modules/$(shell uname -r)/build
+VIDEO_ROOT ?= $(CURDIR)
+
+VIDEO_GEN_PATH := $(VIDEO_ROOT)/driver/vidc/inc/video_generated_h
+VIDEO_DRIVER_LINK := $(VIDEO_ROOT)/video/driver
+
+.PHONY: all prepare modules modules_install clean
+
+all: modules
+
+prepare:
+	mkdir -p $(dir $(VIDEO_GEN_PATH))
+	echo '#define VIDEO_COMPILE_TIME "$(shell date)"' > $(VIDEO_GEN_PATH)
+	echo '#define VIDEO_COMPILE_BY "$(shell id -un)"' >> $(VIDEO_GEN_PATH)
+	echo '#define VIDEO_COMPILE_HOST "$(shell hostname)"' >> $(VIDEO_GEN_PATH)
+	ln -sfn ../driver $(VIDEO_DRIVER_LINK)
+
+modules: prepare
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) KERNEL_SRC=$(KERNEL_SRC) VIDEO_ROOT=$(VIDEO_ROOT) modules
+
+modules_install: modules
+	$(MAKE) INSTALL_MOD_STRIP=1 -C $(KERNEL_SRC) M=$(CURDIR) KERNEL_SRC=$(KERNEL_SRC) VIDEO_ROOT=$(VIDEO_ROOT) modules_install
+
+clean:
+	$(MAKE) -C $(KERNEL_SRC) M=$(CURDIR) KERNEL_SRC=$(KERNEL_SRC) VIDEO_ROOT=$(VIDEO_ROOT) clean
