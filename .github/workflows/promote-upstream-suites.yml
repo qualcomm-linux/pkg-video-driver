@@ -1,12 +1,12 @@
 name: Promote New Upstream Version (Suites)
 description: |
   Promote a new upstream version to all Debian/Ubuntu packaging suites simultaneously.
-  Covers: qcom/debian/latest (unstable), qcom/debian/trixie, qcom/ubuntu/resolute.
+  Covers: qli/debian/latest (unstable), qli/debian/trixie, qcom/ubuntu/resolute.
   Can be triggered manually via workflow_dispatch, or automatically via
   repository_dispatch from the upstream video-driver repository when a new tag is pushed.
 
   Architecture:
-  - promote-latest uses the standard reusable workflow for qcom/debian/latest.
+  - promote-latest uses the standard reusable workflow for qli/debian/latest.
     This also imports the upstream tag into upstream/latest and pushes it.
   - promote-trixie and promote-resolute use custom inline steps that run in
     PARALLEL after promote-latest completes. They create branch-specific PR
@@ -32,22 +32,22 @@ permissions:
 jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Step 1: Promote qcom/debian/latest via the standard reusable workflow.
+  # Step 1: Promote qli/debian/latest via the standard reusable workflow.
   # This job also handles importing the upstream tag into upstream/latest and
   # pushing the upstream/<version> tag to the repo.
   # ─────────────────────────────────────────────────────────────────────────────
   promote-latest:
-    uses: qualcomm-linux/qcom-build-utils/.github/workflows/qcom-promote-upstream-reusable-workflow.yml@main
+    uses: qualcomm-linux/qcom-build-utils/.github/workflows/pkg-promote-reusable-workflow.yml@main
     with:
       qcom-build-utils-ref: main
-      debian-branch: qcom/debian/latest
+      debian-branch: qli/debian/latest
       upstream-tag: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
       upstream-repo: ${{ vars.UPSTREAM_REPO_GITHUB_NAME }}
     secrets:
       PAT: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Steps 2 & 3: Promote qcom/debian/trixie and qcom/ubuntu/resolute in PARALLEL
+  # Steps 2 & 3: Promote qli/debian/trixie and qcom/ubuntu/resolute in PARALLEL
   # after promote-latest completes.
   #
   # Why custom inline steps instead of the reusable workflow?
@@ -58,7 +58,7 @@ jobs:
   #   2. An open PR with head "debian/pr/1.0.17-1" already exists → error
   #
   # The custom steps below create branch-specific PR branches:
-  #   debian/pr/qcom-debian-trixie/1.0.17-1
+  #   debian/pr/qli-debian-trixie/1.0.17-1
   #   debian/pr/qcom-ubuntu-resolute/1.0.17-1
   # These are unique, so both jobs can run in parallel without conflicts.
   # ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +72,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     env:
-      DEBIAN_BRANCH: qcom/debian/trixie
+      DEBIAN_BRANCH: qli/debian/trixie
       UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
       GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
     steps:

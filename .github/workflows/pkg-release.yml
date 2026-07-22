@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       debian-branch:
-        description: The debian branch to release. For example branch "qcom/debian/trixie"
+        description: The debian branch to release. For example branch "qli/debian/trixie"
         type: string
         required: true
 
