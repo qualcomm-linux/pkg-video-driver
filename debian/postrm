@@ -4,18 +4,9 @@
 
 set -e
 
-module_loaded()
-{
-    grep -q "^$1 " /proc/modules 2>/dev/null
-}
-
 case "$1" in
     remove|purge)
-        if module_loaded iris_vpu; then
-            modprobe -r iris_vpu || true
-        fi
         dpkg-trigger update-initramfs
-        modprobe qcom_iris || true
         ;;
 esac
 
