@@ -1,4 +1,4 @@
-Source: iris-vpu-dkms
+Source: iris-vpu
 Section: kernel
 Maintainer: Maintainers.pkg-video-driver <Maintainers.pkg-video-driver@qualcomm.com>
 Uploaders:
