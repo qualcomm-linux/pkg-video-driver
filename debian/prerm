@@ -10,12 +10,10 @@ module_loaded()
 }
 
 case "$1" in
-    remove|purge)
+    remove|upgrade|deconfigure)
         if module_loaded iris_vpu; then
             modprobe -r iris_vpu || true
         fi
-        dpkg-trigger update-initramfs
-        modprobe qcom_iris || true
         ;;
 esac
 
