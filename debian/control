@@ -9,7 +9,7 @@ Homepage: https://github.com/qualcomm-linux/pkg-video-driver
 
 Package: iris-vpu-dkms
 Architecture: arm64
-Depends: kmod,linux-initramfs-tool, ${misc:Depends}
+Depends: linux-initramfs-tool, ${misc:Depends}
 Conflicts: qcom-iris-dkms
 Description: DKMS package for MSM VIDC driver (out-of-tree)
  This package installs source for the 'video' kernel module and builds

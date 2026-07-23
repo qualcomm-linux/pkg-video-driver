@@ -4,68 +4,11 @@
 
 set -e
 
-DKMS_NAME=iris-vpu
-DKMS_PACKAGE_NAME=$DKMS_NAME-dkms
-DKMS_VERSION=$(dpkg-query -W -f='${Version}' "$DKMS_PACKAGE_NAME" | sed 's/^[0-9]*://; s/-[^-]*$//')
-MODULE_POLICY=/usr/lib/modprobe.d/iris-vpu-dkms.conf
-
-module_loaded()
-{
-    grep -q "^$1 " /proc/modules 2>/dev/null
-}
-
-refresh_initramfs()
-{
-    dpkg-trigger update-initramfs
-}
-
-rollback_to_qcom_iris()
-{
-    modprobe -r iris_vpu 2>/dev/null || true
-    rm -f "$MODULE_POLICY"
-    refresh_initramfs
-    modprobe qcom_iris || true
-}
-
-run_dkms_postinst()
-{
-    postinst_found=0
-
-    for DKMS_POSTINST in /usr/lib/dkms/common.postinst /usr/share/$DKMS_PACKAGE_NAME/postinst; do
-        if [ -f "$DKMS_POSTINST" ]; then
-            "$DKMS_POSTINST" "$DKMS_NAME" "$DKMS_VERSION" "/usr/share/$DKMS_PACKAGE_NAME" "" "$1"
-            postinst_found=1
-            break
-        fi
-    done
-
-    if [ "$postinst_found" -eq 0 ]; then
-        echo "ERROR: DKMS version is too old and $DKMS_PACKAGE_NAME was not" >&2
-        echo "built with legacy DKMS support." >&2
-        echo "You must either rebuild $DKMS_PACKAGE_NAME with legacy postinst" >&2
-        echo "support or upgrade DKMS to a more current version." >&2
-        return 1
-    fi
-}
+#DEBHELPER#
 
 case "$1" in
     configure)
-        if ! run_dkms_postinst "$2"; then
-            rollback_to_qcom_iris
-            exit 1
-        fi
-
-        refresh_initramfs
-
-        if module_loaded qcom_iris && ! modprobe -r qcom_iris; then
-            rollback_to_qcom_iris
-            exit 1
-        fi
-
-        if ! modprobe iris_vpu; then
-            rollback_to_qcom_iris
-            exit 1
-        fi
+        dpkg-trigger update-initramfs
         ;;
 esac
 
