@@ -20,6 +20,7 @@ execute_after_dh_install:
 		-o -path ./.pc -prune \
 		-o -path ./LICENSE.txt -prune \
 		-o -path ./README.md -prune \
+		-o -path ./pkg-iris-vpu -prune \
 		-o -print0|cpio -0p $(DEST_SRC)/
 
 override_dh_auto_clean:
