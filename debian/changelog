@@ -2,25 +2,25 @@ iris-vpu-dkms (1.0.19+ds-0qli4~) UNRELEASED; urgency=medium
 
   * Unreleased changes
 
- -- root <root@cb7f970d0160>  Thu, 02 Jul 2026 09:55:34 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Thu, 02 Jul 2026 09:55:34 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli3) forky; urgency=medium
 
   [ Agathe Porte ]
   * Add debian/source/options to ignore .github
 
- -- root <root@bfb2bf56acc7>  Thu, 02 Jul 2026 09:52:52 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Thu, 02 Jul 2026 09:52:52 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli2) forky; urgency=medium
 
   [ Agathe Porte ]
   * No-changes upload to deploy to Debusine
 
- -- root <root@fb3880cd9f5b>  Thu, 02 Jul 2026 09:15:30 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Thu, 02 Jul 2026 09:15:30 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli1) forky; urgency=medium
 
   [ Agathe Porte ]
   * Initial release
 
- -- root <root@c81473de5e6e>  Wed, 01 Jul 2026 11:33:16 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Wed, 01 Jul 2026 11:33:16 +0000
