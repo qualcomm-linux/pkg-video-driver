@@ -1,8 +1,9 @@
-iris-vpu (1.0.22-0qli1~bpo13+1~) UNRELEASED; urgency=medium
+iris-vpu (1.0.22-0qli1~bpo13+1) trixie; urgency=medium
 
+  [ Agathe Porte ]
   * Rebuild for trixie.
 
- -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Wed, 29 Jul 2026 15:12:56 +0200
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Wed, 29 Jul 2026 13:14:09 +0000
 
 iris-vpu (1.0.22-0qli1) forky; urgency=medium
 
