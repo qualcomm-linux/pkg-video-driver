@@ -1,8 +1,11 @@
-iris-vpu-dkms (1.0.19+ds-0qli3~bpo14+1~) UNRELEASED; urgency=medium
+iris-vpu (1.0.22-0qli1) forky; urgency=medium
 
-  * Unreleased changes
+  [ Agathe Porte ]
+  * New upstream release
+  * Rename source package from iris-vpu-dkms to iris-vpu
+  * Stop repacking and ignore upstream packaging in pkg-iris-vpu/ instead
 
- -- root <root@c688ba92867d>  Thu, 02 Jul 2026 10:03:25 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Wed, 29 Jul 2026 13:07:26 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli3~bpo13+1) trixie; urgency=medium
 
@@ -16,18 +19,18 @@ iris-vpu-dkms (1.0.19+ds-0qli3) forky; urgency=medium
   [ Agathe Porte ]
   * Add debian/source/options to ignore .github
 
- -- root <root@bfb2bf56acc7>  Thu, 02 Jul 2026 09:52:52 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Thu, 02 Jul 2026 09:52:52 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli2) forky; urgency=medium
 
   [ Agathe Porte ]
   * No-changes upload to deploy to Debusine
 
- -- root <root@fb3880cd9f5b>  Thu, 02 Jul 2026 09:15:30 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Thu, 02 Jul 2026 09:15:30 +0000
 
 iris-vpu-dkms (1.0.19+ds-0qli1) forky; urgency=medium
 
   [ Agathe Porte ]
   * Initial release
 
- -- root <root@c81473de5e6e>  Wed, 01 Jul 2026 11:33:16 +0000
+ -- Debusine Action GitHub Bot <noreply@bot.invalid>  Wed, 01 Jul 2026 11:33:16 +0000
