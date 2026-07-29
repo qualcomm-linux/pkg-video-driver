@@ -1,6 +1,8 @@
 iris-vpu (1.0.22-0qli1~) UNRELEASED; urgency=medium
 
   * New upstream release
+  * Rename source package from iris-vpu-dkms to iris-vpu
+  * Stop repacking and ignore upstream packaging in pkg-iris-vpu/ instead
 
  -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Wed, 29 Jul 2026 14:46:38 +0200
 
