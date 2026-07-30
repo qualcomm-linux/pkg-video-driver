@@ -1,8 +1,12 @@
-iris-vpu (1.0.19-6~) UNRELEASED; urgency=medium
+iris-vpu (1.0.23-1) UNRELEASED; urgency=medium
 
+  [ Renjiang Han ]
   * WIP — update changelog before next release
 
- -- Renjiang Han <renjiang@qti.qualcomm.com>  Thu, 23 Jul 2026 22:19:28 +0000
+  [ GitHub Service Bot ]
+  * New upstream release 1.0.23.
+
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Thu, 30 Jul 2026 03:05:42 +0000
 
 iris-vpu (1.0.19-5) resolute; urgency=medium
 
