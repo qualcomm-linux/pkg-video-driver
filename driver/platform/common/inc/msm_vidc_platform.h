@@ -299,6 +299,8 @@ struct msm_vidc_platform_data {
 	struct dev_pm_domain_list *opp_pmdomain_tbl;
 	const struct clk_table *clk_tbl;
 	unsigned int clk_tbl_size;
+	const char * const *opp_clk_tbl;
+	unsigned int opp_clk_tbl_size;
 	const int *clk_corner_idx_tbl;
 	const struct clk_rst_table *clk_rst_tbl;
 	unsigned int clk_rst_tbl_size;
@@ -441,6 +443,7 @@ int msm_vidc_adjust_ltr_count(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_use_ltr(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_mark_ltr(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_delta_based_rc(void *instance, struct v4l2_ctrl *ctrl);
+int msm_vidc_adjust_ir_period(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_output_order(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_input_buf_host_max_count(void *instance, struct v4l2_ctrl *ctrl);
 int msm_vidc_adjust_output_buf_host_max_count(void *instance, struct v4l2_ctrl *ctrl);
@@ -503,6 +506,7 @@ int msm_vidc_set_constant_quality(void *instance, enum msm_vidc_inst_capability_
 int msm_vidc_set_vbr_related_properties(void *instance, enum msm_vidc_inst_capability_type cap_id);
 int msm_vidc_set_cbr_related_properties(void *instance, enum msm_vidc_inst_capability_type cap_id);
 int msm_vidc_set_use_and_mark_ltr(void *instance, enum msm_vidc_inst_capability_type cap_id);
+int msm_vidc_set_ir_period(void *instance, enum msm_vidc_inst_capability_type cap_id);
 int msm_vidc_set_nal_length(void *instance, enum msm_vidc_inst_capability_type cap_id);
 int msm_vidc_set_session_priority(void *instance, enum msm_vidc_inst_capability_type cap_id);
 int msm_vidc_set_flip(void *instance, enum msm_vidc_inst_capability_type cap_id);
