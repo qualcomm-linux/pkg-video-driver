@@ -1,8 +1,12 @@
-iris-vpu (1.0.22-0qli2~) UNRELEASED; urgency=medium
+iris-vpu (1.0.23-1) UNRELEASED; urgency=medium
 
+  [ Debusine Action GitHub Bot ]
   * Unreleased changes
 
- -- Debusine Action GitHub Bot <noreply@bot.invalid>  Wed, 29 Jul 2026 13:10:04 +0000
+  [ GitHub Service Bot ]
+  * New upstream release
+
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Thu, 30 Jul 2026 03:01:08 +0000
 
 iris-vpu (1.0.22-0qli1) forky; urgency=medium
 
