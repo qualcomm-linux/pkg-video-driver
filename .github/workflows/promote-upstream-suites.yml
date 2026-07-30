@@ -25,9 +25,8 @@ on:
     types: [upstream-release]
 
 permissions:
-  contents: write
+  contents: read
   packages: read
-  pull-requests: write
 
 jobs:
 
@@ -37,6 +36,10 @@ jobs:
   # pushing the upstream/<version> tag to the repo.
   # ─────────────────────────────────────────────────────────────────────────────
   promote-latest:
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
     uses: qualcomm-linux/qcom-build-utils/.github/workflows/pkg-promote-reusable-workflow.yml@main
     with:
       qcom-build-utils-ref: main
@@ -66,6 +69,10 @@ jobs:
   promote-trixie:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
     container:
       image: ghcr.io/qualcomm-linux/pkg-builder:noble
       credentials:
@@ -74,7 +81,10 @@ jobs:
     env:
       DEBIAN_BRANCH: qli/debian/trixie
       UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+      UPSTREAM_REPO: ${{ vars.UPSTREAM_REPO_GITHUB_NAME }}
       GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+      DEB_PKG_BOT_CI_NAME: ${{ vars.DEB_PKG_BOT_CI_NAME }}
+      DEB_PKG_BOT_CI_EMAIL: ${{ vars.DEB_PKG_BOT_CI_EMAIL }}
     steps:
 
       - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
@@ -93,16 +103,20 @@ jobs:
           path: ./package-repo
           fetch-depth: 0
 
-      - name: Authenticate with GitHub
-        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
-
       - name: Compute normalized version and PR branch name
         run: |
+          case "$UPSTREAM_TAG" in
+            *[!A-Za-z0-9._-]* | "")
+              echo "::error::Invalid upstream tag: $UPSTREAM_TAG"
+              exit 1
+              ;;
+          esac
+
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
           PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
-          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
-          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
+          printf 'NORMALIZED_VERSION=%s\n' "$NORMALIZED_VERSION" >> "$GITHUB_ENV"
+          printf 'PR_BRANCH=%s\n' "$PR_BRANCH" >> "$GITHUB_ENV"
           echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
           echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
           echo "ℹ️ PR branch        : $PR_BRANCH"
@@ -111,42 +125,46 @@ jobs:
         working-directory: ./package-repo
         run: |
           git remote add upstream-source \
-            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+            "https://x-access-token:${GH_TOKEN}@github.com/${UPSTREAM_REPO}.git"
           git fetch upstream-source "+refs/tags/*:refs/tags/*"
 
       - name: Create PR branch and merge upstream
         working-directory: ./package-repo
         run: |
-          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          git config user.name "$DEB_PKG_BOT_CI_NAME"
+          git config user.email "$DEB_PKG_BOT_CI_EMAIL"
           git checkout "$DEBIAN_BRANCH"
-          git checkout -b "${{ env.PR_BRANCH }}"
+          git checkout -b "$PR_BRANCH"
           ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
 
       - name: Promote changelog
         working-directory: ./package-repo
         run: |
-          export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          export DEBFULLNAME="$DEB_PKG_BOT_CI_NAME"
+          export DEBEMAIL="$DEB_PKG_BOT_CI_EMAIL"
           dch \
             --distribution=UNRELEASED \
-            --newversion="${{ env.NORMALIZED_VERSION }}-1" \
-            "New upstream release ${{ env.NORMALIZED_VERSION }}."
-          git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
+            --newversion="${NORMALIZED_VERSION}-1" \
+            "New upstream release ${NORMALIZED_VERSION}."
+          git commit -a -s -m "Update changelog version to ${NORMALIZED_VERSION}-1 and UNRELEASED suite"
 
       - name: Push PR branch and open PR
         working-directory: ./package-repo
         run: |
-          git push origin "${{ env.PR_BRANCH }}"
+          git push origin "$PR_BRANCH"
           gh pr create \
-            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
-            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
+            --title "Promotion to $NORMALIZED_VERSION ($DEBIAN_BRANCH)" \
+            --body "Automated promotion of upstream version $NORMALIZED_VERSION (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
             --base "$DEBIAN_BRANCH" \
-            --head "${{ env.PR_BRANCH }}"
+            --head "$PR_BRANCH"
 
   promote-resolute:
     needs: promote-latest
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      packages: read
+      pull-requests: write
     container:
       image: ghcr.io/qualcomm-linux/pkg-builder:noble
       credentials:
@@ -155,7 +173,10 @@ jobs:
     env:
       DEBIAN_BRANCH: qcom/ubuntu/resolute
       UPSTREAM_TAG: ${{ github.event_name == 'repository_dispatch' && github.event.client_payload.upstream-tag || inputs.upstream-tag }}
+      UPSTREAM_REPO: ${{ vars.UPSTREAM_REPO_GITHUB_NAME }}
       GH_TOKEN: ${{ secrets.DEB_PKG_BOT_CI_TOKEN }}
+      DEB_PKG_BOT_CI_NAME: ${{ vars.DEB_PKG_BOT_CI_NAME }}
+      DEB_PKG_BOT_CI_EMAIL: ${{ vars.DEB_PKG_BOT_CI_EMAIL }}
     steps:
 
       - name: Checkout qcom-build-utils (for merge_debian_packaging_upstream script)
@@ -174,16 +195,20 @@ jobs:
           path: ./package-repo
           fetch-depth: 0
 
-      - name: Authenticate with GitHub
-        run: gh auth login --with-token <<< "${{ secrets.DEB_PKG_BOT_CI_TOKEN }}"
-
       - name: Compute normalized version and PR branch name
         run: |
+          case "$UPSTREAM_TAG" in
+            *[!A-Za-z0-9._-]* | "")
+              echo "::error::Invalid upstream tag: $UPSTREAM_TAG"
+              exit 1
+              ;;
+          esac
+
           NORMALIZED_VERSION=$(echo "$UPSTREAM_TAG" | sed 's/^v//')
           SAFE_DEBIAN_BRANCH=$(echo "$DEBIAN_BRANCH" | tr '/' '-')
           PR_BRANCH="debian/pr/${SAFE_DEBIAN_BRANCH}/${NORMALIZED_VERSION}-1"
-          echo "NORMALIZED_VERSION=$NORMALIZED_VERSION" >> $GITHUB_ENV
-          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
+          printf 'NORMALIZED_VERSION=%s\n' "$NORMALIZED_VERSION" >> "$GITHUB_ENV"
+          printf 'PR_BRANCH=%s\n' "$PR_BRANCH" >> "$GITHUB_ENV"
           echo "ℹ️ Upstream tag     : $UPSTREAM_TAG"
           echo "ℹ️ Normalized version: $NORMALIZED_VERSION"
           echo "ℹ️ PR branch        : $PR_BRANCH"
@@ -192,35 +217,35 @@ jobs:
         working-directory: ./package-repo
         run: |
           git remote add upstream-source \
-            "https://x-access-token:${{ secrets.DEB_PKG_BOT_CI_TOKEN }}@github.com/${{ vars.UPSTREAM_REPO_GITHUB_NAME }}.git"
+            "https://x-access-token:${GH_TOKEN}@github.com/${UPSTREAM_REPO}.git"
           git fetch upstream-source "+refs/tags/*:refs/tags/*"
 
       - name: Create PR branch and merge upstream
         working-directory: ./package-repo
         run: |
-          git config user.name "${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          git config user.email "${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          git config user.name "$DEB_PKG_BOT_CI_NAME"
+          git config user.email "$DEB_PKG_BOT_CI_EMAIL"
           git checkout "$DEBIAN_BRANCH"
-          git checkout -b "${{ env.PR_BRANCH }}"
+          git checkout -b "$PR_BRANCH"
           ../qcom-build-utils/scripts/merge_debian_packaging_upstream "$UPSTREAM_TAG"
 
       - name: Promote changelog
         working-directory: ./package-repo
         run: |
-          export DEBFULLNAME="${{ vars.DEB_PKG_BOT_CI_NAME }}"
-          export DEBEMAIL="${{ vars.DEB_PKG_BOT_CI_EMAIL }}"
+          export DEBFULLNAME="$DEB_PKG_BOT_CI_NAME"
+          export DEBEMAIL="$DEB_PKG_BOT_CI_EMAIL"
           dch \
             --distribution=UNRELEASED \
-            --newversion="${{ env.NORMALIZED_VERSION }}-1" \
-            "New upstream release ${{ env.NORMALIZED_VERSION }}."
-          git commit -a -s -m "Update changelog version to ${{ env.NORMALIZED_VERSION }}-1 and UNRELEASED suite"
+            --newversion="${NORMALIZED_VERSION}-1" \
+            "New upstream release ${NORMALIZED_VERSION}."
+          git commit -a -s -m "Update changelog version to ${NORMALIZED_VERSION}-1 and UNRELEASED suite"
 
       - name: Push PR branch and open PR
         working-directory: ./package-repo
         run: |
-          git push origin "${{ env.PR_BRANCH }}"
+          git push origin "$PR_BRANCH"
           gh pr create \
-            --title "Promotion to ${{ env.NORMALIZED_VERSION }} ($DEBIAN_BRANCH)" \
-            --body "Automated promotion of upstream version ${{ env.NORMALIZED_VERSION }} (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
+            --title "Promotion to $NORMALIZED_VERSION ($DEBIAN_BRANCH)" \
+            --body "Automated promotion of upstream version $NORMALIZED_VERSION (tag: \`$UPSTREAM_TAG\`) to branch \`$DEBIAN_BRANCH\`." \
             --base "$DEBIAN_BRANCH" \
-            --head "${{ env.PR_BRANCH }}"
+            --head "$PR_BRANCH"
