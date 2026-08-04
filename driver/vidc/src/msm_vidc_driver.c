@@ -2109,6 +2109,27 @@ int msm_vidc_get_mbs_per_frame(struct msm_vidc_inst *inst)
 	return NUM_MBS_PER_FRAME(height, width);
 }
 
+int msm_vidc_set_core_id(struct msm_vidc_inst *inst)
+{
+	u32 core_id = inst->core_id;
+	int rc;
+
+	if (!core_id)
+		return 0;
+
+	rc = venus_hfi_session_property(inst,
+					HFI_PROP_CORE_ID,
+					HFI_HOST_FLAGS_NONE,
+					HFI_PORT_NONE,
+					HFI_PAYLOAD_U32,
+					&core_id,
+					sizeof(u32));
+	if (rc)
+		i_vpr_e(inst, "%s: set core_id failed\n", __func__);
+
+	return rc;
+}
+
 int msm_vidc_get_fps(struct msm_vidc_inst *inst)
 {
 	int fps;
@@ -5844,6 +5865,268 @@ static bool msm_vidc_ignore_session_load(struct msm_vidc_inst *inst)
 	return false;
 }
 
+static int msm_vidc_check_core_mbps_dual_core(struct msm_vidc_inst *inst)
+{
+	struct msm_vidc_core *core = inst->core;
+	u32 num_cores = max(core->platform->data.num_cores, 1);
+	u32 max_session_cnt_per_core = core->capabilities[MAX_SESSION_COUNT].value / num_cores;
+	u32 max_load = core->capabilities[MAX_MBPS].value;
+	u32 core0_session_cnt = 0, core1_session_cnt = 0;
+	u64 core0_total_mbps = 0, core1_total_mbps = 0;
+	u64 core0_enc_mbps = 0, core1_enc_mbps = 0;
+	u64 core0_critical = 0, core1_critical = 0;
+	bool select_core0, select_core1;
+	struct msm_vidc_inst *instance;
+	u64 new_load, mbps;
+
+	/* skip mbps check for non-realtime, thumbnail, image sessions */
+	if (msm_vidc_ignore_session_load(inst)) {
+		i_vpr_h(inst,
+			"%s: skip mbps check due to NRT %d, TH %d, IMG %d, error session %d\n",
+			__func__, !is_realtime_session(inst), is_thumbnail_session(inst),
+			is_image_session(inst), is_session_error(inst));
+		return 0;
+	}
+
+	core_lock(core, __func__);
+	list_for_each_entry(instance, &core->instances, list) {
+		if (!is_critical_priority_session(instance))
+			continue;
+
+		if (instance->core_id == MSM_VIDC_VCODEC0)
+			core0_critical += msm_vidc_get_inst_load(instance);
+		else if (instance->core_id == MSM_VIDC_VCODEC1)
+			core1_critical += msm_vidc_get_inst_load(instance);
+	}
+	core_unlock(core, __func__);
+
+	if (core0_critical > max_load && core1_critical > max_load) {
+		i_vpr_e(inst,
+			"%s: Hardware overloaded with critical sessions. core0 %llu, core1 %llu, max %u\n",
+			__func__, core0_critical, core1_critical, max_load);
+		return -ENOMEM;
+	}
+
+	core_lock(core, __func__);
+	list_for_each_entry(instance, &core->instances, list) {
+		/* ignore thumbnail, image, non realtime, error sessions */
+		if (msm_vidc_ignore_session_load(instance))
+			continue;
+
+		mbps = msm_vidc_get_inst_load(instance);
+
+		if (instance->core_id == MSM_VIDC_VCODEC0) {
+			core0_total_mbps += mbps;
+			core0_session_cnt++;
+			if (is_encode_session(instance))
+				core0_enc_mbps += mbps;
+		} else if (instance->core_id == MSM_VIDC_VCODEC1) {
+			core1_total_mbps += mbps;
+			core1_session_cnt++;
+			if (is_encode_session(instance))
+				core1_enc_mbps += mbps;
+		}
+	}
+	core_unlock(core, __func__);
+
+	if (is_encode_session(inst)) {
+		/* reject encoder if all encoders mbps is greater than MAX_MBPS */
+		if (core0_enc_mbps > max_load && core1_enc_mbps > max_load) {
+			i_vpr_e(inst,
+				"%s: Hardware overloaded. core0 %llu, core1 %llu, max %u\n",
+				__func__, core0_enc_mbps, core1_enc_mbps, max_load);
+			return -ENOMEM;
+		}
+
+		/*
+		 * if total_mbps is greater than max_mbps then reduce all decoders
+		 * priority by 1 to allow this encoder
+		 */
+		if (core0_total_mbps > max_load || core1_total_mbps > max_load) {
+			core_lock(core, __func__);
+			list_for_each_entry(instance, &core->instances, list) {
+				/* reduce realtime decode sessions priority */
+				if (is_decode_session(instance) && is_realtime_session(instance)) {
+					instance->adjust_priority = RT_DEC_DOWN_PRORITY_OFFSET;
+					i_vpr_h(inst, "%s: pending adjust priority by %d\n",
+						__func__, instance->adjust_priority);
+				}
+			}
+			core_unlock(core, __func__);
+		}
+	} else if (is_decode_session(inst)) {
+		/*
+		 * if total_mbps is greater than max_mbps then allow this
+		 * decoder by reducing its piority (moving it to NRT)
+		 */
+		if (core0_total_mbps > max_load && core1_total_mbps > max_load) {
+			inst->adjust_priority = RT_DEC_DOWN_PRORITY_OFFSET;
+			i_vpr_h(inst, "%s: pending adjust priority by %d\n",
+				__func__, inst->adjust_priority);
+		}
+	}
+
+	if (inst->core_id == MSM_VIDC_VCODEC0)
+		return core0_total_mbps <= max_load ? 0 : -ENOMEM;
+	else if (inst->core_id == MSM_VIDC_VCODEC1)
+		return core1_total_mbps <= max_load ? 0 : -ENOMEM;
+
+	new_load = msm_vidc_get_inst_load(inst);
+	inst->core_id = 0;
+
+	select_core0 = (core0_total_mbps + new_load <= max_load) &&
+		       (core0_session_cnt < max_session_cnt_per_core);
+	select_core1 = (core1_total_mbps + new_load <= max_load) &&
+		       (core1_session_cnt < max_session_cnt_per_core);
+
+	if (select_core0 && select_core1) {
+		inst->core_id = (core0_total_mbps <= core1_total_mbps) ?
+				 MSM_VIDC_VCODEC0 : MSM_VIDC_VCODEC1;
+	} else if (select_core0) {
+		inst->core_id = MSM_VIDC_VCODEC0;
+	} else if (select_core1) {
+		inst->core_id = MSM_VIDC_VCODEC1;
+	} else {
+		i_vpr_e(inst,
+			"%s: all cores overloaded. core0 %llu, core1 %llu, new_load %llu, max %u\n",
+			__func__, core0_total_mbps, core1_total_mbps, new_load, max_load);
+		return -ENOMEM;
+	}
+
+	i_vpr_h(inst,
+		"%s: selected core_id %u (new_load=%llu, core0_total_mbps=%llu, core1_total_mbps=%llu, max=%u)\n",
+		__func__, inst->core_id, new_load, core0_total_mbps, core1_total_mbps, max_load);
+
+	return 0;
+}
+
+static int msm_vidc_check_core_mbpf_dual_core(struct msm_vidc_inst *inst)
+{
+	struct msm_vidc_core *core = inst->core;
+	u32 num_cores = max(core->platform->data.num_cores, 1);
+	u32 max_session_cnt_per_core = core->capabilities[MAX_SESSION_COUNT].value / num_cores;
+	u32 max_image_mbpf = core->capabilities[MAX_IMAGE_MBPF].value;
+	u32 max_rt_mbpf = core->capabilities[MAX_RT_MBPF].value;
+	u32 max_mbpf = core->capabilities[MAX_MBPF].value;
+	u32 core0_video_rt_mbpf = 0, core1_video_rt_mbpf = 0;
+	u32 core0_critical_mbpf = 0, core1_critical_mbpf = 0;
+	u32 core0_session_cnt = 0, core1_session_cnt = 0;
+	u32 core0_video_mbpf = 0, core1_video_mbpf = 0;
+	u32 core0_image_mbpf = 0, core1_image_mbpf = 0;
+	bool select_core0, select_core1;
+	struct msm_vidc_inst *instance;
+	u32 new_mbpf;
+
+	core_lock(core, __func__);
+	list_for_each_entry(instance, &core->instances, list) {
+		if (!is_critical_priority_session(instance))
+			continue;
+
+		if (instance->core_id == MSM_VIDC_VCODEC0)
+			core0_critical_mbpf += msm_vidc_get_mbs_per_frame(instance);
+		else if (instance->core_id == MSM_VIDC_VCODEC1)
+			core1_critical_mbpf += msm_vidc_get_mbs_per_frame(instance);
+	}
+	core_unlock(core, __func__);
+
+	if (core0_critical_mbpf > max_mbpf && core1_critical_mbpf > max_mbpf) {
+		i_vpr_e(inst,
+			"%s: Hardware overloaded with critical sessions. core0 %u, core1 %u, max %u\n",
+			__func__, core0_critical_mbpf, core1_critical_mbpf, max_mbpf);
+		return -ENOMEM;
+	}
+
+	core_lock(core, __func__);
+	list_for_each_entry(instance, &core->instances, list) {
+		/* ignore thumbnail session */
+		if (is_thumbnail_session(instance))
+			continue;
+
+		if (instance->core_id == MSM_VIDC_VCODEC0) {
+			if (is_image_session(instance))
+				core0_image_mbpf += msm_vidc_get_mbs_per_frame(instance);
+			else
+				core0_video_mbpf += msm_vidc_get_mbs_per_frame(instance);
+		} else if (instance->core_id == MSM_VIDC_VCODEC1) {
+			if (is_image_session(instance))
+				core1_image_mbpf += msm_vidc_get_mbs_per_frame(instance);
+			else
+				core1_video_mbpf += msm_vidc_get_mbs_per_frame(instance);
+		}
+	}
+	core_unlock(core, __func__);
+
+	if (core0_video_mbpf > max_mbpf && core1_video_mbpf > max_mbpf) {
+		i_vpr_e(inst,
+			"%s: video overloaded. core0 %u, core1 %u, max %u\n",
+			__func__, core0_video_mbpf, core1_video_mbpf, max_mbpf);
+		return -ENOMEM;
+	}
+
+	if (core0_image_mbpf > max_image_mbpf && core1_image_mbpf > max_image_mbpf) {
+		i_vpr_e(inst,
+			"%s: image overloaded. core0 %u, core1 %u, max %u\n",
+			__func__, core0_image_mbpf, core1_image_mbpf, max_image_mbpf);
+		return -ENOMEM;
+	}
+
+	core_lock(core, __func__);
+	/* check real-time video sessions max limit */
+	list_for_each_entry(instance, &core->instances, list) {
+		if (msm_vidc_ignore_session_load(instance))
+			continue;
+
+		if (instance->core_id == MSM_VIDC_VCODEC0) {
+			core0_video_rt_mbpf += msm_vidc_get_mbs_per_frame(instance);
+			core0_session_cnt++;
+		} else if (instance->core_id == MSM_VIDC_VCODEC1) {
+			core1_video_rt_mbpf += msm_vidc_get_mbs_per_frame(instance);
+			core1_session_cnt++;
+		}
+	}
+	core_unlock(core, __func__);
+
+	if (core0_video_rt_mbpf > max_rt_mbpf && core1_video_rt_mbpf > max_rt_mbpf) {
+		i_vpr_e(inst,
+			"%s: real-time video overloaded. core0 %u, core1 %u, max %u\n",
+			__func__, core0_video_rt_mbpf, core1_video_rt_mbpf, max_rt_mbpf);
+		return -ENOMEM;
+	}
+
+	if (inst->core_id == MSM_VIDC_VCODEC0)
+		return core0_video_mbpf <= max_mbpf ? 0 : -ENOMEM;
+	else if (inst->core_id == MSM_VIDC_VCODEC1)
+		return core1_video_mbpf <= max_mbpf ? 0 : -ENOMEM;
+
+	new_mbpf = msm_vidc_get_mbs_per_frame(inst);
+	inst->core_id = 0;
+
+	select_core0 = (core0_video_mbpf + new_mbpf <= max_mbpf) &&
+		       (core0_session_cnt < max_session_cnt_per_core);
+	select_core1 = (core1_video_mbpf + new_mbpf <= max_mbpf) &&
+		       (core1_session_cnt < max_session_cnt_per_core);
+
+	if (select_core0 && select_core1) {
+		inst->core_id = (core0_video_mbpf <= core1_video_mbpf) ?
+				 MSM_VIDC_VCODEC0 : MSM_VIDC_VCODEC1;
+	} else if (select_core0) {
+		inst->core_id = MSM_VIDC_VCODEC0;
+	} else if (select_core1) {
+		inst->core_id = MSM_VIDC_VCODEC1;
+	} else {
+		i_vpr_e(inst,
+			"%s: video overloaded. core0 %u, core1 %u, new_mbpf %u, max %u\n",
+			__func__, core0_video_mbpf, core1_video_mbpf, new_mbpf, max_mbpf);
+		return -ENOMEM;
+	}
+
+	i_vpr_h(inst,
+		"%s: selected core_id %u (new_mbpf=%u, core0_video_mbpf=%u, core1_video_mbpf=%u, max=%u)\n",
+		__func__, inst->core_id, new_mbpf, core0_video_mbpf, core1_video_mbpf, max_mbpf);
+
+	return 0;
+}
+
 int msm_vidc_check_core_mbps(struct msm_vidc_inst *inst)
 {
 	u64 mbps = 0, total_mbps = 0, enc_mbps = 0, critical_mbps = 0;
@@ -5851,6 +6134,9 @@ int msm_vidc_check_core_mbps(struct msm_vidc_inst *inst)
 	struct msm_vidc_inst *instance;
 
 	core = inst->core;
+
+	if (core->platform->data.num_cores == 2)
+		return msm_vidc_check_core_mbps_dual_core(inst);
 
 	/* skip mbps check for non-realtime, thumnail, image sessions */
 	if (msm_vidc_ignore_session_load(inst)) {
@@ -5938,6 +6224,9 @@ int msm_vidc_check_core_mbpf(struct msm_vidc_inst *inst)
 	struct msm_vidc_inst *instance;
 
 	core = inst->core;
+
+	if (core->platform->data.num_cores == 2)
+		return msm_vidc_check_core_mbpf_dual_core(inst);
 
 	core_lock(core, __func__);
 	list_for_each_entry(instance, &core->instances, list) {

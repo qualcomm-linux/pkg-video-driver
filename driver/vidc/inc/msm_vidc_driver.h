@@ -681,6 +681,7 @@ int msm_vidc_process_drain_done(struct msm_vidc_inst *inst);
 int msm_vidc_process_drain_last_flag(struct msm_vidc_inst *inst);
 int msm_vidc_process_psc_last_flag(struct msm_vidc_inst *inst);
 int msm_vidc_get_mbs_per_frame(struct msm_vidc_inst *inst);
+int msm_vidc_set_core_id(struct msm_vidc_inst *inst);
 u32 msm_vidc_get_max_bitrate(struct msm_vidc_inst *inst);
 int msm_vidc_get_fps(struct msm_vidc_inst *inst);
 int msm_vidc_num_buffers(struct msm_vidc_inst *inst,

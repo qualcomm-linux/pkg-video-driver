@@ -231,6 +231,8 @@ int msm_vidc_mem_protect_video_regions_v2(struct msm_vidc_core *core)
 			region = VIDEO_REGION_VM0_NONSECURE_NP_ID;
 		else if (cb->region & MSM_VIDC_SECURE_NONPIXEL)
 			region = VIDEO_REGION_VM0_SECURE_NP_ID;
+		else if (cb->region & MSM_VIDC_SECURE_FIRMWARE)
+			region = VIDEO_REGION_SECURE_FW_REGION_ID;
 		else
 			continue;
 
