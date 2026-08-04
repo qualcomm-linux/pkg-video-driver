@@ -891,6 +891,10 @@ int msm_venc_streamon_input(struct msm_vidc_inst *inst)
 	if (rc)
 		goto error;
 
+	rc = msm_vidc_set_core_id(inst);
+	if (rc)
+		goto error;
+
 	rc = msm_vidc_check_scaling_supported(inst);
 	if (rc)
 		goto error;
@@ -1141,6 +1145,9 @@ int msm_venc_s_fmt_output(struct msm_vidc_inst *inst, struct v4l2_format *f)
 	codec_align = (codec == MSM_VIDC_HEVC ||
 		codec == MSM_VIDC_HEIC) ? 32 : 16;
 
+	inst->compose.width = f->fmt.pix_mp.width;
+	inst->compose.height = f->fmt.pix_mp.height;
+
 	/* use rotated width height if rotation is enabled */
 	width = inst->compose.width;
 	height = inst->compose.height;
@@ -1257,8 +1264,8 @@ static int msm_venc_s_fmt_input(struct msm_vidc_inst *inst, struct v4l2_format *
 
 	fmt = &inst->fmts[INPUT_PORT];
 	fmt->type = INPUT_MPLANE;
-	fmt->fmt.pix_mp.width = video_y_stride_pix(pix_fmt, width);
-	fmt->fmt.pix_mp.height = video_y_scanlines(pix_fmt, height);
+	fmt->fmt.pix_mp.width = width;
+	fmt->fmt.pix_mp.height = height;
 	fmt->fmt.pix_mp.num_planes = 1;
 	fmt->fmt.pix_mp.pixelformat = f->fmt.pix_mp.pixelformat;
 	fmt->fmt.pix_mp.plane_fmt[0].bytesperline = bytesperline;
@@ -1275,6 +1282,8 @@ static int msm_venc_s_fmt_input(struct msm_vidc_inst *inst, struct v4l2_format *
 	 * output port color after setting input color info.
 	 */
 	output_fmt = &inst->fmts[OUTPUT_PORT];
+	output_fmt->fmt.pix_mp.width = fmt->fmt.pix_mp.width;
+	output_fmt->fmt.pix_mp.height = fmt->fmt.pix_mp.height;
 	output_fmt->fmt.pix_mp.colorspace = fmt->fmt.pix_mp.colorspace;
 	output_fmt->fmt.pix_mp.xfer_func = fmt->fmt.pix_mp.xfer_func;
 	output_fmt->fmt.pix_mp.ycbcr_enc = fmt->fmt.pix_mp.ycbcr_enc;
@@ -1449,6 +1458,8 @@ int msm_venc_s_selection(struct msm_vidc_inst *inst, struct v4l2_selection *s)
 		inst->compose.height = inst->crop.height;
 		/* update output format based on new crop dimensions */
 		output_fmt = &inst->fmts[OUTPUT_PORT];
+		output_fmt->fmt.pix_mp.width = inst->compose.width;
+		output_fmt->fmt.pix_mp.height = inst->compose.height;
 		rc = msm_venc_s_fmt_output(inst, output_fmt);
 		if (rc)
 			return rc;
@@ -1494,6 +1505,8 @@ int msm_venc_s_selection(struct msm_vidc_inst *inst, struct v4l2_selection *s)
 
 		/* update output format based on new compose dimensions */
 		output_fmt = &inst->fmts[OUTPUT_PORT];
+		output_fmt->fmt.pix_mp.width = inst->compose.width;
+		output_fmt->fmt.pix_mp.height = inst->compose.height;
 		rc = msm_venc_s_fmt_output(inst, output_fmt);
 		if (rc)
 			return rc;
