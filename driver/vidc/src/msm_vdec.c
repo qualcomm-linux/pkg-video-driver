@@ -1605,6 +1605,10 @@ int msm_vdec_streamon_input(struct msm_vidc_inst *inst)
 	if (rc)
 		goto error;
 
+	rc = msm_vidc_set_core_id(inst);
+	if (rc)
+		goto error;
+
 	rc = msm_vidc_set_v4l2_properties(inst);
 	if (rc)
 		goto error;
@@ -1908,6 +1912,10 @@ int msm_vdec_streamon_output(struct msm_vidc_inst *inst)
 	}
 
 	rc = msm_vidc_check_session_supported(inst);
+	if (rc)
+		goto error;
+
+	rc = msm_vidc_set_core_id(inst);
 	if (rc)
 		goto error;
 

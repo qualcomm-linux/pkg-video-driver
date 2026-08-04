@@ -25,6 +25,8 @@
 #define VIDEO_ARCH_LX 1
 
 #define VCODEC_BASE_OFFS_IRIS36                 0x00000000
+#define VCODEC1_BASE_OFFS_IRIS36		0x00040000
+
 /*
  * MSM_VIDC_HW_VIRT is enabled for hw virtualization only; in hw virtualization
  * scheme, each GVM will access only CS block registers and only CS block
@@ -121,12 +123,31 @@ enum {
 #define AON_WRAPPER_MVP_NOC_CORE_SW_RESET (AON_BASE_OFFS + 0x18)
 #define AON_WRAPPER_MVP_NOC_CORE_CLK_CONTROL (AON_BASE_OFFS + 0x20)
 #define AON_WRAPPER_SPARE (AON_BASE_OFFS + 0x28)
+#define AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_CONTROL	(AON_BASE_OFFS + 0x2C)
+#define AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_STATUS	(AON_BASE_OFFS + 0x30)
 /*
  * --------------------------------------------------------------------------
  * MODULE: VCODEC_SS registers
  * --------------------------------------------------------------------------
  */
 #define VCODEC_SS_IDLE_STATUSn           (VCODEC_BASE_OFFS_IRIS36 + 0x70)
+#define VCODEC1_SS_IDLE_STATUSn		(VCODEC1_BASE_OFFS_IRIS36 + 0x70)
+
+#define DMA_NOC_IDLE			BIT(22)
+#define VCODEC0_POWER_STATUS		BIT(1)
+#define VCODEC1_POWER_STATUS		BIT(4)
+#define NOC_LPI_STATUS_DONE		BIT(0)
+#define NOC_LPI_STATUS_DENY		BIT(1)
+#define NOC_LPI_STATUS_ACTIVE		BIT(2)
+#define NOC_LPI_VCODEC1_STATUS_DONE	BIT(8)
+#define NOC_LPI_VCODEC1_STATUS_DENY	BIT(9)
+#define NOC_LPI_VCODEC1_STATUS_ACTIVE	BIT(10)
+#define REQ_VCODEC0_POWER_DOWN_PREP	BIT(0)
+#define REQ_VCODEC1_POWER_DOWN_PREP	BIT(2)
+#define VCODEC0_BRIDGE_SW_RESET		BIT(0)
+#define VCODEC0_BRIDGE_HW_RESET_DISABLE	BIT(1)
+#define VCODEC1_BRIDGE_SW_RESET		BIT(4)
+#define VCODEC1_BRIDGE_HW_RESET_DISABLE	BIT(5)
 
 /*
  * --------------------------------------------------------------------------
@@ -1441,6 +1462,576 @@ int msm_vidc_init_iris36(struct msm_vidc_core *core)
 		nord_venus_ops.enable_intr = core->venus_ops->enable_intr;
 		core->venus_ops = &nord_venus_ops;
 	}
+
+	return 0;
+}
+
+static int __power_on_glymur_controller(struct msm_vidc_core *core)
+{
+	int rc;
+
+	rc = call_res_op(core, gdsc_on, core, "venus");
+	if (rc) {
+		d_vpr_e("%s: enable venus gdsc failed\n", __func__);
+		return rc;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "core_iface");
+	if (rc) {
+		d_vpr_e("%s: enable core_iface failed\n", __func__);
+		goto fail_core_iface;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "core_freerun");
+	if (rc) {
+		d_vpr_e("%s: enable core_freerun failed\n", __func__);
+		goto fail_core_freerun;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "core");
+	if (rc) {
+		d_vpr_e("%s: enable core failed\n", __func__);
+		goto fail_core;
+	}
+
+	return 0;
+
+fail_core:
+	call_res_op(core, clk_disable, core, "core_freerun");
+fail_core_freerun:
+	call_res_op(core, clk_disable, core, "core_iface");
+fail_core_iface:
+	call_res_op(core, gdsc_off, core, "venus");
+
+	return rc;
+}
+
+static int __power_off_glymur_controller(struct msm_vidc_core *core)
+{
+	u32 handshake_done, handshake_busy;
+	u32 value, count = 0;
+	int rc;
+
+	rc = __write_register(core, CPU_CS_X2RPMh_IRIS36, 0x3);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, WRAPPER_IRIS_CPU_NOC_LPI_CONTROL, 0x1);
+	if (rc)
+		return rc;
+
+	rc = __read_register_with_poll_timeout(core, WRAPPER_IRIS_CPU_NOC_LPI_STATUS,
+					       0x1, 0x1, 200, 2000);
+	if (rc)
+		goto disable_power;
+
+	rc = __write_register(core, WRAPPER_IRIS_CPU_NOC_LPI_CONTROL, 0x0);
+	if (rc)
+		return rc;
+
+	do {
+		rc = __write_register(core, AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_CONTROL, 0x1);
+		if (rc)
+			return rc;
+
+		usleep_range(10, 20);
+
+		rc = __read_register(core, AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_STATUS, &value);
+		if (rc)
+			return rc;
+
+		handshake_done = value & NOC_LPI_STATUS_DONE;
+		handshake_busy = value & (NOC_LPI_STATUS_DENY | NOC_LPI_STATUS_ACTIVE);
+
+		if (handshake_done || !handshake_busy)
+			break;
+
+		rc = __write_register(core, AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_CONTROL, 0x0);
+		if (rc)
+			return rc;
+
+		usleep_range(10, 20);
+
+	} while (++count < 1000);
+
+	if (!handshake_done && handshake_busy)
+		d_vpr_e("%s: LPI handshake timeout\n", __func__);
+
+	rc = __read_register_with_poll_timeout(core, AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_STATUS,
+					       0x1, 0x1, 200, 2000);
+	if (rc)
+		goto disable_power;
+
+	rc = __write_register(core, AON_WRAPPER_MVP_VIDEO_CTL_NOC_LPI_CONTROL, 0x0);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, WRAPPER_DEBUG_BRIDGE_LPI_CONTROL_IRIS36, 0x0);
+	if (rc)
+		return rc;
+
+	rc = __read_register_with_poll_timeout(core, WRAPPER_DEBUG_BRIDGE_LPI_STATUS_IRIS36,
+					       0x0, 0x0, 200, 2000);
+disable_power:
+	call_res_op(core, reset_control_assert, core, "core_bus");
+	call_res_op(core, reset_control_assert, core, "core");
+	usleep_range(400, 500);
+	call_res_op(core, reset_control_deassert, core, "core_bus");
+	call_res_op(core, reset_control_deassert, core, "core");
+
+	call_res_op(core, clk_disable, core, "core");
+	call_res_op(core, clk_disable, core, "core_freerun");
+	call_res_op(core, clk_disable, core, "core_iface");
+
+	call_res_op(core, gdsc_off, core, "venus");
+
+	return rc;
+}
+
+static int __power_on_glymur_vcodec0(struct msm_vidc_core *core)
+{
+	int rc;
+
+	rc = call_res_op(core, gdsc_on, core, "vcodec0");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec0 gdsc failed\n", __func__);
+		return rc;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec0_iface");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec0_iface failed\n", __func__);
+		goto fail_vcodec0_iface;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec0_core_freerun");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec0_core_freerun failed\n", __func__);
+		goto fail_vcodec0_freerun;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec0_core");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec0_core failed\n", __func__);
+		goto fail_vcodec0_core;
+	}
+
+	return 0;
+
+fail_vcodec0_core:
+	call_res_op(core, clk_disable, core, "vcodec0_core_freerun");
+fail_vcodec0_freerun:
+	call_res_op(core, clk_disable, core, "vcodec0_iface");
+fail_vcodec0_iface:
+	call_res_op(core, gdsc_off, core, "vcodec0");
+
+	return rc;
+}
+
+static int __power_on_glymur_vcodec1(struct msm_vidc_core *core)
+{
+	int rc;
+
+	rc = call_res_op(core, gdsc_on, core, "vcodec1");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec1 gdsc failed\n", __func__);
+		return rc;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec1_iface");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec1_iface failed\n", __func__);
+		goto fail_vcodec1_iface;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec1_core_freerun");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec1_core_freerun failed\n", __func__);
+		goto fail_vcodec1_freerun;
+	}
+
+	rc = call_res_op(core, clk_enable, core, "vcodec1_core");
+	if (rc) {
+		d_vpr_e("%s: enable vcodec1_core failed\n", __func__);
+		goto fail_vcodec1_core;
+	}
+
+	return 0;
+
+fail_vcodec1_core:
+	call_res_op(core, clk_disable, core, "vcodec1_core_freerun");
+fail_vcodec1_freerun:
+	call_res_op(core, clk_disable, core, "vcodec1_iface");
+fail_vcodec1_iface:
+	call_res_op(core, gdsc_off, core, "vcodec1");
+
+	return rc;
+}
+
+static int __power_off_glymur_vcodec0(struct msm_vidc_core *core)
+{
+	bool handshake_done, handshake_busy;
+	u32 value, count = 0;
+	int rc, i;
+
+	rc = __read_register(core, WRAPPER_CORE_POWER_STATUS, &value);
+	if (rc)
+		return rc;
+
+	if (!(value & VCODEC0_POWER_STATUS))
+		goto disable_power;
+
+	rc = __read_register(core, WRAPPER_CORE_CLOCK_CONFIG_IRIS36, &value);
+	if (rc)
+		return rc;
+
+	if (value) {
+		rc = __write_register(core, WRAPPER_CORE_CLOCK_CONFIG_IRIS36, 0x0);
+		if (rc)
+			return rc;
+	}
+
+	for (i = 0; i < core->capabilities[NUM_VPP_PIPE].value; i++) {
+		rc = __read_register_with_poll_timeout(core, VCODEC_SS_IDLE_STATUSn + 4 * i,
+						       DMA_NOC_IDLE, DMA_NOC_IDLE, 2000, 20000);
+		if (rc)
+			goto disable_power;
+	}
+
+	do {
+		rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL,
+				      REQ_VCODEC0_POWER_DOWN_PREP);
+		if (rc)
+			return rc;
+
+		usleep_range(15, 20);
+
+		rc = __read_register(core, AON_WRAPPER_MVP_NOC_LPI_STATUS, &value);
+		if (rc)
+			return rc;
+
+		handshake_done = value & NOC_LPI_STATUS_DONE;
+		handshake_busy = value & (NOC_LPI_STATUS_DENY | NOC_LPI_STATUS_ACTIVE);
+
+		if (handshake_done || !handshake_busy)
+			break;
+
+		rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL, 0);
+		if (rc)
+			return rc;
+
+		usleep_range(15, 20);
+
+	} while (++count < 1000);
+
+	if (!handshake_done && handshake_busy)
+		goto disable_power;
+
+	rc = __read_register_with_poll_timeout(core, AON_WRAPPER_MVP_NOC_LPI_STATUS,
+					       NOC_LPI_STATUS_DONE,
+					       NOC_LPI_STATUS_DONE, 200, 2000);
+	if (rc)
+		d_vpr_e("%s: AON_WRAPPER_MVP_NOC_LPI_CONTROL failed\n", __func__);
+
+	rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL, 0x0);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, VCODEC0_BRIDGE_SW_RESET |
+			      VCODEC0_BRIDGE_HW_RESET_DISABLE);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, VCODEC0_BRIDGE_HW_RESET_DISABLE);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, 0x0);
+	if (rc)
+		return rc;
+
+disable_power:
+	call_res_op(core, reset_control_assert, core, "vcodec0_bus");
+	call_res_op(core, reset_control_assert, core, "vcodec0_core");
+	usleep_range(400, 500);
+	call_res_op(core, reset_control_deassert, core, "vcodec0_bus");
+	call_res_op(core, reset_control_deassert, core, "vcodec0_core");
+
+	call_res_op(core, clk_disable, core, "vcodec0_core");
+	call_res_op(core, clk_disable, core, "vcodec0_core_freerun");
+	call_res_op(core, clk_disable, core, "vcodec0_iface");
+	call_res_op(core, gdsc_off, core, "vcodec0");
+
+	return 0;
+}
+
+static int __power_off_glymur_vcodec1(struct msm_vidc_core *core)
+{
+	bool handshake_done, handshake_busy;
+	u32 value, count = 0;
+	int rc, i;
+
+	rc = __read_register(core, WRAPPER_CORE_POWER_STATUS, &value);
+	if (rc)
+		return rc;
+
+	if (!(value & VCODEC1_POWER_STATUS))
+		goto disable_power;
+
+	rc = __read_register(core, WRAPPER_CORE_CLOCK_CONFIG_IRIS36, &value);
+	if (rc)
+		return rc;
+
+	if (value) {
+		rc = __write_register(core, WRAPPER_CORE_CLOCK_CONFIG_IRIS36, 0x0);
+		if (rc)
+			return rc;
+	}
+
+	for (i = 0; i < core->capabilities[NUM_VPP_PIPE].value; i++) {
+		rc = __read_register_with_poll_timeout(core, VCODEC1_SS_IDLE_STATUSn + 4 * i,
+						       DMA_NOC_IDLE, DMA_NOC_IDLE, 2000, 20000);
+		if (rc)
+			goto disable_power;
+	}
+
+	do {
+		rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL,
+				      REQ_VCODEC1_POWER_DOWN_PREP);
+		if (rc)
+			return rc;
+
+		usleep_range(15, 20);
+
+		rc = __read_register(core, AON_WRAPPER_MVP_NOC_LPI_STATUS, &value);
+		if (rc)
+			return rc;
+
+		handshake_done = value & NOC_LPI_VCODEC1_STATUS_DONE;
+		handshake_busy = value & (NOC_LPI_VCODEC1_STATUS_DENY |
+					  NOC_LPI_VCODEC1_STATUS_ACTIVE);
+
+		if (handshake_done || !handshake_busy)
+			break;
+
+		rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL, 0);
+		if (rc)
+			return rc;
+
+		usleep_range(15, 20);
+
+	} while (++count < 1000);
+
+	if (!handshake_done && handshake_busy)
+		goto disable_power;
+
+	rc = __read_register_with_poll_timeout(core, AON_WRAPPER_MVP_NOC_LPI_STATUS,
+					       NOC_LPI_VCODEC1_STATUS_DONE,
+					       NOC_LPI_VCODEC1_STATUS_DONE, 200, 2000);
+	if (rc)
+		d_vpr_e("%s: AON_WRAPPER_MVP_NOC_LPI_CONTROL failed\n", __func__);
+
+	rc = __write_register(core, AON_WRAPPER_MVP_NOC_LPI_CONTROL, 0x0);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, VCODEC1_BRIDGE_SW_RESET |
+			      VCODEC1_BRIDGE_HW_RESET_DISABLE);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, VCODEC1_BRIDGE_HW_RESET_DISABLE);
+	if (rc)
+		return rc;
+
+	rc = __write_register(core, CPU_CS_AHB_BRIDGE_SYNC_RESET, 0x0);
+	if (rc)
+		return rc;
+
+disable_power:
+	call_res_op(core, reset_control_assert, core, "vcodec1_bus");
+	call_res_op(core, reset_control_assert, core, "vcodec1_core");
+	usleep_range(400, 500);
+	call_res_op(core, reset_control_deassert, core, "vcodec1_bus");
+	call_res_op(core, reset_control_deassert, core, "vcodec1_core");
+
+	call_res_op(core, clk_disable, core, "vcodec1_core");
+	call_res_op(core, clk_disable, core, "vcodec1_core_freerun");
+	call_res_op(core, clk_disable, core, "vcodec1_iface");
+	call_res_op(core, gdsc_off, core, "vcodec1");
+
+	return 0;
+}
+
+static int __power_on_glymur_hardware(struct msm_vidc_core *core)
+{
+	int rc;
+
+	rc = __power_on_glymur_vcodec0(core);
+	if (rc) {
+		d_vpr_e("%s: failed to power on vcodec0\n", __func__);
+		return rc;
+	}
+
+	rc = __power_on_glymur_vcodec1(core);
+	if (rc) {
+		d_vpr_e("%s: failed to power on vcodec1\n", __func__);
+		goto fail_power_on_vcodec1;
+	}
+
+	return 0;
+
+fail_power_on_vcodec1:
+	__power_off_glymur_vcodec0(core);
+
+	return rc;
+}
+
+static int __power_off_glymur_hardware(struct msm_vidc_core *core)
+{
+	int vcodec0_rc, vcodec1_rc;
+
+	vcodec0_rc = __power_off_glymur_vcodec0(core);
+	if (vcodec0_rc)
+		d_vpr_e("%s: failed to power off vcodec0\n", __func__);
+
+	vcodec1_rc = __power_off_glymur_vcodec1(core);
+	if (vcodec1_rc)
+		d_vpr_e("%s: failed to power off vcodec1\n", __func__);
+
+	return vcodec0_rc | vcodec1_rc;
+}
+
+static int __power_on_glymur(struct msm_vidc_core *core)
+{
+	int rc;
+
+	if (is_core_sub_state(core, CORE_SUBSTATE_POWER_ENABLE))
+		return 0;
+
+	if (!core_in_valid_state(core)) {
+		d_vpr_e("%s: invalid core state %s\n", __func__, core_state_name(core->state));
+		return -EINVAL;
+	}
+
+	rc = call_res_op(core, set_bw, core, INT_MAX, INT_MAX);
+	if (rc) {
+		d_vpr_e("%s: failed to vote buses, rc %d\n", __func__, rc);
+		return rc;
+	}
+
+	rc = __power_on_glymur_controller(core);
+	if (rc) {
+		d_vpr_e("%s: failed to power on glymur controller\n", __func__);
+		goto fail_power_on_controller;
+	}
+
+	rc = __power_on_glymur_hardware(core);
+	if (rc) {
+		d_vpr_e("%s: failed to power on glymur hardware\n", __func__);
+		goto fail_power_on_hardware;
+	}
+
+	rc = msm_vidc_change_core_sub_state(core, 0, CORE_SUBSTATE_POWER_ENABLE, __func__);
+	if (rc)
+		goto fail_power_on_substate;
+
+	rc = call_res_op(core, set_clks, core, get_min_clock_index(core));
+	if (rc) {
+		d_vpr_e("%s: failed to scale clocks\n", __func__);
+		goto fail_set_clks;
+	}
+
+	rc = call_res_op(core, gdsc_sw_ctrl, core);
+	if (rc)
+		goto fail_set_clks;
+
+	__set_registers(core);
+	__interrupt_init_iris36(core);
+	core->intr_status = 0;
+	enable_irq(core->resource->irq);
+
+	return rc;
+
+fail_set_clks:
+	msm_vidc_change_core_sub_state(core, CORE_SUBSTATE_POWER_ENABLE, 0, __func__);
+fail_power_on_substate:
+	__power_off_glymur_hardware(core);
+fail_power_on_hardware:
+	__power_off_glymur_controller(core);
+fail_power_on_controller:
+	call_res_op(core, set_bw, core, 0, 0);
+
+	return rc;
+}
+
+static int __power_off_glymur(struct msm_vidc_core *core)
+{
+	int rc;
+
+	if (!is_core_sub_state(core, CORE_SUBSTATE_POWER_ENABLE))
+		return 0;
+
+	rc = call_res_op(core, set_clks, core, get_min_clock_index(core));
+	if (rc)
+		d_vpr_e("%s: resetting clocks failed\n", __func__);
+
+	rc = call_res_op(core, gdsc_sw_ctrl, core);
+	if (rc)
+		d_vpr_e("%s: gdsc sw ctrl failed\n", __func__);
+
+	rc = __power_off_glymur_hardware(core);
+	if (rc)
+		d_vpr_e("%s: power off hardware failed\n", __func__);
+
+	rc = __power_off_glymur_controller(core);
+	if (rc)
+		d_vpr_e("%s: power off controller failed\n", __func__);
+
+	rc = call_res_op(core, set_bw, core, 0, 0);
+	if (rc)
+		d_vpr_e("%s: failed to unvote buses\n", __func__);
+
+	if (!call_venus_op(core, watchdog, core, core->intr_status))
+		disable_irq_nosync(core->resource->irq);
+
+	msm_vidc_change_core_sub_state(core, CORE_SUBSTATE_POWER_ENABLE, 0, __func__);
+
+	return rc;
+}
+
+static struct msm_vidc_venus_ops iris36_glymur_ops = {
+	.boot_firmware = __boot_firmware_iris36,
+	.raise_interrupt = __raise_interrupt_iris36,
+	.clear_interrupt = __clear_interrupt_iris36,
+	.power_on = __power_on_glymur,
+	.power_off = __power_off_glymur,
+	.prepare_pc = __prepare_pc_iris36,
+	.watchdog = __watchdog_iris36,
+	.noc_error_info = __noc_error_info_iris36,
+	.hw_ctrl_gdsc = __hw_ctrl_gdsc_iris36,
+	.sw_ctrl_gdsc = __sw_ctrl_gdsc_iris36,
+	.scm_mem_protect = msm_vidc_mem_protect_video_regions_v2,
+	.enable_intr = __enable_intr_iris36,
+};
+
+static struct msm_vidc_session_ops msm_session_glymur_ops = {
+	.buffer_size = msm_buffer_size_iris36,
+	.min_count = msm_buffer_min_count_iris36,
+	.extra_count = msm_buffer_extra_count_iris36,
+	.ring_buf_count = msm_vidc_ring_buf_count_iris36,
+	.scale_clocks = msm_vidc_scale_clocks_iris36,
+	.calc_bw = msm_vidc_calc_bw_iris36,
+	.decide_work_route = msm_vidc_decide_work_route_iris36,
+	.decide_work_mode = msm_vidc_decide_work_mode_iris36,
+	.decide_quality_mode = msm_vidc_decide_quality_mode_iris36,
+	.decide_slice_max_mb = msm_vidc_encoder_decide_slice_max_mb_iris36,
+};
+
+int msm_vidc_init_glymur_iris36(struct msm_vidc_core *core)
+{
+	core->venus_ops = &iris36_glymur_ops;
+	core->session_ops = &msm_session_glymur_ops;
 
 	return 0;
 }

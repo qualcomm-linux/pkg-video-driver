@@ -372,6 +372,7 @@ struct msm_vidc_platform_data {
 	const u32  *msm_vidc_ssr_type;
 	unsigned int msm_vidc_ssr_type_size;
 	int (*init_cb_devs)(struct msm_vidc_core *core);
+	u32 num_cores;
 };
 
 struct msm_vidc_platform {

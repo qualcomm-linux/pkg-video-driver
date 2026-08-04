@@ -9,9 +9,12 @@
 struct msm_vidc_core;
 struct v4l2_ctrl;
 
-#if defined(CONFIG_MSM_VIDC_NORDAU)
+#if defined(CONFIG_MSM_VIDC_NORDAU) || \
+	defined(CONFIG_MSM_VIDC_GLYMUR) || \
+	defined(CONFIG_MSM_VIDC_QLI)
 int msm_vidc_init_iris36(struct msm_vidc_core *core);
 int msm_vidc_adjust_bitrate_boost_iris36(void *instance, struct v4l2_ctrl *ctrl);
+int msm_vidc_init_glymur_iris36(struct msm_vidc_core *core);
 #else
 static inline int msm_vidc_init_iris36(struct msm_vidc_core *core)
 {
@@ -19,6 +22,11 @@ static inline int msm_vidc_init_iris36(struct msm_vidc_core *core)
 }
 
 static inline int msm_vidc_adjust_bitrate_boost_iris36(void *instance, struct v4l2_ctrl *ctrl)
+{
+	return -EINVAL;
+}
+
+static inline int msm_vidc_init_glymur_iris36(struct msm_vidc_core *core)
 {
 	return -EINVAL;
 }
