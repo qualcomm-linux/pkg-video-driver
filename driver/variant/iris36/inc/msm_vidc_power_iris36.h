@@ -21,4 +21,6 @@ int msm_vidc_calculate_frequency_iris36(struct api_calculation_input codec_input
 					struct api_calculation_freq_output *codec_output);
 int msm_vidc_calculate_bandwidth_iris36(struct api_calculation_input codec_input,
 					struct api_calculation_bw_output *codec_output);
+int msm_vidc_scale_clocks_iris36(struct msm_vidc_inst *inst);
+
 #endif

@@ -147,7 +147,11 @@ struct msm_vidc_core {
 	struct msm_vidc_synx_fence_data        synx_fence_data;
 	struct video_firmware {
 		struct device *dev;
+#if defined(HAVE_QCOM_TEE_PAS)
+		struct qcom_pas_context *ctx;
+#else
 		struct qcom_scm_pas_context *ctx;
+#endif
 		struct iommu_domain *iommu_domain;
 	} fw;
 	/* hw_version: distinguish chip versions: v1, v2 */
