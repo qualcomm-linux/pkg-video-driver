@@ -1,8 +1,5 @@
 iris-vpu (1.0.25-1) UNRELEASED; urgency=medium
 
-  [ Renjiang Han ]
-  * WIP — update changelog before next release
-
   [ GitHub Service Bot ]
   * New upstream release 1.0.23.
   * New upstream release 1.0.24.
