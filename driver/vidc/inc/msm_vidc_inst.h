@@ -152,6 +152,7 @@ struct msm_vidc_inst {
 	u32                                adjust_priority;
 	bool                               iframe;
 	u32                                fw_min_count;
+	u32                                core_id;
 };
 
 #endif // _MSM_VIDC_INST_H_
