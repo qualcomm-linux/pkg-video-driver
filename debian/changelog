@@ -1,12 +1,19 @@
 iris-vpu (1.0.26-1) UNRELEASED; urgency=medium
 
   [ GitHub Service Bot ]
+  * New upstream release 1.0.26.
+ 
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 04 Aug 2026 12:12:02 +0000
+
+
+iris-vpu (1.0.25-1) resolute; urgency=medium
+
+  [ GitHub Service Bot ]
   * New upstream release 1.0.23.
   * New upstream release 1.0.24.
   * New upstream release 1.0.25.
-  * New upstream release 1.0.26.
 
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 04 Aug 2026 12:12:02 +0000
+ -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 04 Aug 2026 09:16:04 +0000
 
 iris-vpu (1.0.19-5) resolute; urgency=medium
 
