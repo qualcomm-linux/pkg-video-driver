@@ -1,15 +1,8 @@
 iris-vpu (1.0.26-0qli1~) UNRELEASED; urgency=medium
 
-  [ Debusine Action GitHub Bot ]
-  * Unreleased changes
-
-  [ GitHub Service Bot ]
-  * New upstream release
-  * New upstream release
-  * New upstream release
   * New upstream release
 
- -- GitHub Service Bot <githubservice@qti.qualcomm.com>  Tue, 04 Aug 2026 12:11:23 +0000
+ -- Agathe Porte <agathe.porte@oss.qualcomm.com>  Mon, 24 Aug 2026 14:13:54 +0200
 
 iris-vpu (1.0.22-0qli1) forky; urgency=medium
 
