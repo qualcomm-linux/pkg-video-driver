@@ -5,7 +5,7 @@ on:
     inputs:
 
       debian-branch:
-        description: The debian branch to apply the promotion to. For example branch "qli/debian/latest"
+        description: The debian branch to apply the promotion to. For example branch "qcom/debian/latest"
         type: string
         required: true
 
@@ -23,9 +23,9 @@ jobs:
   promote:
     name: Promote
 
-    uses: qualcomm-linux/qcom-build-utils/.github/workflows/pkg-promote-reusable-workflow.yml@main
+    uses: qualcomm-linux/qli-ci/.github/workflows/pkg-promote-reusable-workflow.yml@main
     with:
-      qcom-build-utils-ref: main
+      qli-ci-ref: main
       debian-branch: ${{inputs.debian-branch}}
       upstream-tag: ${{inputs.upstream-tag}}
       upstream-repo: ${{vars.UPSTREAM_REPO_GITHUB_NAME}}
