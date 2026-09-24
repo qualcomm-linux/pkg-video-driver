@@ -1,0 +1,185 @@
+name: AWS S3 Helper
+description: Upload and download files from AWS S3
+
+inputs:
+  s3_bucket:
+    description: S3 bucket name
+    required: true
+
+  local_file:
+    description: Local file path or file-list path
+    required: false
+    default: ../artifacts/file_list.txt
+
+  download_file:
+    description: S3 object path to download
+    required: false
+    default: ""
+
+  download_location:
+    description: Local download directory
+    required: false
+    default: .
+
+  mode:
+    description: Mode of operation
+    required: true
+    default: single-upload
+
+  upload_location:
+    description: S3 upload prefix
+    required: true
+
+outputs:
+  presigned_url:
+    description: Pre-signed URL for the uploaded file
+    value: ${{ steps.sync-data.outputs.presigned_url }}
+
+  s3_location:
+    description: Upload location
+    value: ${{ inputs.upload_location }}
+
+runs:
+  using: composite
+  steps:
+    - name: Sync data
+      id: sync-data
+      shell: bash
+      env:
+        S3_BUCKET: ${{ inputs.s3_bucket }}
+        LOCAL_FILE: ${{ inputs.local_file }}
+        DOWNLOAD_FILE: ${{ inputs.download_file }}
+        DOWNLOAD_LOCATION: ${{ inputs.download_location }}
+        MODE: ${{ inputs.mode }}
+        UPLOAD_LOCATION: ${{ inputs.upload_location }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        case "$MODE" in
+          single-upload|multi-upload|download)
+            ;;
+          *)
+            echo "::error::Invalid mode: $MODE"
+            exit 1
+            ;;
+        esac
+
+        if [[ "$S3_BUCKET" != [a-z0-9]* ]] ||
+           [[ "$S3_BUCKET" =~ [^a-zA-Z0-9._-] ]]; then
+          echo "::error::Invalid S3 bucket name"
+          exit 1
+        fi
+
+        if [[ "$UPLOAD_LOCATION" == -* ]]; then
+          echo "::error::Invalid upload location"
+          exit 1
+        fi
+
+        echo "::group::S3 synchronization"
+
+        case "$MODE" in
+          multi-upload)
+            if [ ! -s "$LOCAL_FILE" ]; then
+              echo "::error::File list is empty: $LOCAL_FILE"
+              exit 1
+            fi
+
+            manifest="$WORKSPACE/presigned_urls.json"
+            manifest_parts="$WORKSPACE/.presigned_urls_parts"
+
+            rm -rf -- "$manifest_parts"
+            mkdir -p -- "$manifest_parts"
+
+            index=0
+
+            while IFS= read -r file || [ -n "$file" ]; do
+              [ -n "$file" ] || continue
+
+              resolved_file="$(readlink -f -- "$file")"
+
+              if [ ! -f "$resolved_file" ]; then
+                echo "::warning::Skipping non-regular file: $file"
+                continue
+              fi
+
+              filename="$(basename -- "$resolved_file")"
+              object_key="$UPLOAD_LOCATION/$filename"
+              part_file="$manifest_parts/$index.json"
+
+              aws s3 cp \
+                "$resolved_file" \
+                "s3://$S3_BUCKET/$object_key"
+
+              presigned_url="$(
+                aws s3 presign \
+                  "s3://$S3_BUCKET/$object_key" \
+                  --expires-in 259200
+              )"
+
+              jq -n \
+                --arg filename "$filename" \
+                --arg url "$presigned_url" \
+                '{($filename): $url}' > "$part_file"
+
+              index=$((index + 1))
+            done < "$LOCAL_FILE"
+
+            if [ "$index" -eq 0 ]; then
+              echo "::error::No files were uploaded"
+              exit 1
+            fi
+
+            jq -s 'add // {}' "$manifest_parts"/*.json > "$manifest"
+            rm -rf -- "$manifest_parts"
+
+            jq . "$manifest"
+            ;;
+
+          single-upload)
+            resolved_file="$(readlink -f -- "$LOCAL_FILE")"
+
+            if [ ! -f "$resolved_file" ]; then
+              echo "::error::File not found: $LOCAL_FILE"
+              exit 1
+            fi
+
+            filename="$(basename -- "$resolved_file")"
+            object_key="$UPLOAD_LOCATION/$filename"
+
+            aws s3 cp \
+              "$resolved_file" \
+              "s3://$S3_BUCKET/$object_key"
+
+            presigned_url="$(
+              aws s3 presign \
+                "s3://$S3_BUCKET/$object_key" \
+                --expires-in 259200
+            )"
+
+            printf 'presigned_url=%s\n' "$presigned_url" >> "$GITHUB_OUTPUT"
+            ;;
+
+          download)
+            if [ -z "$DOWNLOAD_FILE" ]; then
+              echo "::error::download_file is required for download mode"
+              exit 1
+            fi
+
+            mkdir -p -- "$DOWNLOAD_LOCATION"
+
+            aws s3 cp \
+              "s3://$S3_BUCKET/$DOWNLOAD_FILE" \
+              "$DOWNLOAD_LOCATION"
+            ;;
+        esac
+
+        echo "::endgroup::"
+
+    - name: Upload pre-signed URL manifest
+      if: inputs.mode == 'multi-upload'
+      uses: actions/upload-artifact@v4
+      with:
+        name: presigned_urls.json
+        path: ${{ github.workspace }}/presigned_urls.json
+        retention-days: 3

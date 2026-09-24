@@ -1,0 +1,192 @@
+name: IRIS Injection
+description: Inject IRIS app and video content tarball into rootfs image
+
+inputs:
+  machine:
+    description: Target machine name
+    required: true
+
+  docker_image:
+    description: Docker image name
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Create top-level images directory
+      shell: bash
+      env:
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        mkdir -p -- "$WORKSPACE/images"
+
+    - name: Run IRIS injection in Docker
+      shell: bash
+      env:
+        MACHINE: ${{ inputs.machine }}
+        DOCKER_IMAGE: ${{ inputs.docker_image }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        case "$MACHINE" in
+          qcs9100-ride-sx|\
+          qcs8300-ride-sx|\
+          rb3gen2-core-kit|\
+          qcs615-ride|\
+          sm8750-mtp|\
+          kaanapali-mtp|\
+          qcom-armv8a)
+            ;;
+          *)
+            echo "::error::Unsupported machine: $MACHINE"
+            exit 1
+            ;;
+        esac
+
+        if [[ "$DOCKER_IMAGE" =~ [[:space:]\;\&\|\<\>\`\'\"] ]]; then
+          echo "::error::Invalid Docker image reference"
+          exit 1
+        fi
+
+        workspace_root="$(dirname "$WORKSPACE")"
+        repo_name="$(basename "$WORKSPACE")"
+
+        docker run --rm \
+          -v "${workspace_root}:/workspace" \
+          -w "/workspace/${repo_name}" \
+          -e "MACHINE=$MACHINE" \
+          -e "WORKSPACE=/workspace/${repo_name}" \
+          --privileged \
+          "$DOCKER_IMAGE" \
+          bash -lc '
+            set -euo pipefail
+
+            image_base_dir="build/tmp/deploy/images/${MACHINE}"
+
+            echo "Looking for image output under: ${image_base_dir}"
+
+            if [ ! -d "$image_base_dir" ]; then
+              echo "::error::Machine output directory not found: $image_base_dir"
+              echo "Available image directories:"
+              find build/tmp/deploy/images \
+                -maxdepth 2 \
+                -type d \
+                -print | sort || true
+              exit 1
+            fi
+
+            image_dir="$(
+              find "$image_base_dir" \
+                -maxdepth 1 \
+                -type d \
+                -name "*.qcomflash" \
+                -print -quit
+            )"
+
+            if [ -z "$image_dir" ]; then
+              echo "::error::No .qcomflash directory found under $image_base_dir"
+              find "$image_base_dir" \
+                -maxdepth 2 \
+                -print | sort || true
+              exit 1
+            fi
+
+            echo "Using image directory: $image_dir"
+
+            cd "$image_dir"
+
+            if [ ! -e rootfs.img ]; then
+              echo "::error::rootfs.img not found in $image_dir"
+              exit 1
+            fi
+
+            rootfs_img="$(realpath rootfs.img)"
+
+            if [ ! -f "$rootfs_img" ]; then
+              echo "::error::Resolved rootfs image is not a regular file: $rootfs_img"
+              exit 1
+            fi
+
+            iris_build_dir="$WORKSPACE/v4l-video-test-app/build"
+            video_tarball="$WORKSPACE/downloads/video_clips_iris.tar.gz"
+
+            if [ ! -d "$iris_build_dir" ]; then
+              echo "::error::IRIS application build directory not found: $iris_build_dir"
+              exit 1
+            fi
+
+            if [ ! -f "$video_tarball" ]; then
+              echo "::error::Video tarball not found: $video_tarball"
+              exit 1
+            fi
+
+            mkdir -p /tmp/rootfs
+
+            loopdev=""
+
+            cleanup() {
+              set +e
+              sync || true
+              mountpoint -q /tmp/rootfs && umount /tmp/rootfs || true
+              [ -n "$loopdev" ] && losetup -d "$loopdev" || true
+            }
+
+            trap cleanup EXIT
+
+            modprobe loop max_loop=64 || true
+
+            for i in $(seq 0 63); do
+              [ -b "/dev/loop$i" ] ||
+                mknod -m 660 "/dev/loop$i" b 7 "$i" || true
+            done
+
+            for attempt in 1 2 3; do
+              loopdev="$(
+                losetup --find --show "$rootfs_img" 2>/dev/null || true
+              )"
+
+              if [ -n "$loopdev" ]; then
+                break
+              fi
+
+              echo "Loop allocation attempt $attempt failed"
+              sleep 2
+            done
+
+            if [ -z "$loopdev" ]; then
+              echo "::error::Failed to allocate loop device for $rootfs_img"
+              exit 1
+            fi
+
+            echo "Using loop device: $loopdev"
+
+            mount "$loopdev" /tmp/rootfs
+
+            mkdir -p \
+              /tmp/rootfs/data/vendor/iris_test_app/input \
+              /tmp/rootfs/data/vendor/iris_test_app/output
+
+            cp -a \
+              "$iris_build_dir/." \
+              /tmp/rootfs/data/vendor/iris_test_app/
+
+            cp -a \
+              "$video_tarball" \
+              /tmp/rootfs/data/vendor/iris_test_app/
+
+            echo "Injected files:"
+            ls -la /tmp/rootfs/data/vendor/iris_test_app/
+
+            sync
+            umount /tmp/rootfs
+
+            losetup -d "$loopdev"
+            loopdev=""
+
+            trap - EXIT
+
+            echo "IRIS injection completed for $MACHINE"
+          '
