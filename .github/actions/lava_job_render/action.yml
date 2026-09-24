@@ -1,0 +1,245 @@
+name: LAVA Job Render
+description: Render a LAVA job definition
+
+inputs:
+  docker_image:
+    description: Docker image to use for rendering
+    required: true
+
+  machine:
+    description: Target machine name
+    required: true
+
+  lavaname:
+    description: LAVA device type name
+    required: true
+
+  presigned_urls_file:
+    description: Absolute path to presigned_urls.json
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Extract presigned URLs for this machine
+      id: get_urls
+      shell: bash
+      env:
+        MACHINE: ${{ inputs.machine }}
+        PRESIGNED_FILE: ${{ inputs.presigned_urls_file }}
+      run: |
+        set -euo pipefail
+
+        flash_key="${MACHINE}_flash_files.tar"
+        rootfs_key="${MACHINE}_rootfs.img"
+
+        if [ ! -f "$PRESIGNED_FILE" ]; then
+          echo "::error::Presigned URL file not found"
+          exit 1
+        fi
+
+        flash_url="$(
+          jq -r --arg key "$flash_key" '.[$key] // empty' "$PRESIGNED_FILE"
+        )"
+
+        rootfs_url="$(
+          jq -r --arg key "$rootfs_key" '.[$key] // empty' "$PRESIGNED_FILE"
+        )"
+
+        if [ -z "$flash_url" ] || [ -z "$rootfs_url" ]; then
+          echo "::error::Required presigned URLs are missing"
+          exit 1
+        fi
+
+        {
+          printf 'flash_url=%s\n' "$flash_url"
+          printf 'rootfs_url=%s\n' "$rootfs_url"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Write synthetic cloudData.json and metadata.json
+      id: write_json
+      shell: bash
+      env:
+        MACHINE: ${{ inputs.machine }}
+        LAVA_NAME: ${{ inputs.lavaname }}
+        FLASH_URL: ${{ steps.get_urls.outputs.flash_url }}
+        ROOTFS_URL: ${{ steps.get_urls.outputs.rootfs_url }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        job_render_dir="$(dirname "$WORKSPACE")/job_render"
+
+        if [ ! -d "$job_render_dir" ]; then
+          echo "::error::job_render directory was not found"
+          exit 1
+        fi
+
+        data_dir="$job_render_dir/data"
+        mkdir -p -- "$data_dir"
+
+        case "$MACHINE" in
+          qcs9100-ride-sx)
+            dtb_name="qcs9100-ride-r3"
+            ;;
+          qcs8300-ride-sx)
+            dtb_name="qcs8300-ride"
+            ;;
+          rb3gen2-core-kit)
+            dtb_name="qcs6490-rb3gen2"
+            ;;
+          qcs615-ride)
+            dtb_name="qcs615-ride"
+            ;;
+          sm8750-mtp)
+            dtb_name="sm8750-mtp"
+            ;;
+          kaanapali-mtp)
+            dtb_name="kaanapali-mtp"
+            ;;
+          *)
+            dtb_name="$MACHINE"
+            ;;
+        esac
+
+        printf 'dtb_name=%s\n' "$dtb_name" >> "$GITHUB_OUTPUT"
+        printf 'job_render_dir=%s\n' "$job_render_dir" >> "$GITHUB_OUTPUT"
+
+        jq -n \
+          --arg machine "$MACHINE" \
+          --arg lavaname "$LAVA_NAME" \
+          --arg flash_url "$FLASH_URL" \
+          --arg rootfs_url "$ROOTFS_URL" \
+          '{
+            id: ("ci-" + $machine),
+            kind: "kbuild",
+            name: ("ci-build-" + $machine),
+            path: ["checkout", ("ci-build-" + $machine)],
+            group: ("ci-build-" + $machine),
+            parent: "",
+            state: "done",
+            result: "pass",
+            artifacts: {
+              metadata: "",
+              kernel: "",
+              vmlinux: "",
+              modules: "",
+              ramdisk: "",
+              firmware: "",
+              dtb: "",
+              flash_image: $flash_url,
+              rootfs_image: $rootfs_url
+            },
+            data: {
+              kernel_revision: {
+                tree: "qcom-next",
+                url: "",
+                branch: "main",
+                commit: "",
+                describe: "",
+                version: {
+                  version: 0,
+                  patchlevel: 0,
+                  sublevel: null,
+                  extra: "",
+                  name: null
+                },
+                patchset: null,
+                commit_tags: [],
+                commit_message: "",
+                tip_of_branch: true
+              },
+              arch: "arm64",
+              defconfig: "defconfig",
+              compiler: "gcc-12",
+              error_code: null,
+              error_msg: null,
+              fragments: [],
+              config_full: "defconfig",
+              platform: $lavaname,
+              runtime: "lava",
+              job_id: ("ci-" + $machine),
+              job_context: "github-actions",
+              kernel_type: "image",
+              regression: null
+            },
+            debug: {},
+            jobfilter: null,
+            platform_filter: [],
+            owner: "production",
+            submitter: "service:pipeline"
+          }' > "$data_dir/cloudData.json"
+
+        jq -n \
+          --arg dtb_key "dtbs/qcom/${dtb_name}.dtb" \
+          '{
+            build: {
+              arch: "arm64",
+              compiler: "gcc-12",
+              defconfig: "defconfig",
+              fragments: [],
+              config_full: "defconfig",
+              result: "pass"
+            },
+            artifacts: {
+              ($dtb_key): ""
+            }
+          }' > "$data_dir/metadata.json"
+
+    - name: Render LAVA job definition
+      shell: bash
+      env:
+        DOCKER_IMAGE: ${{ inputs.docker_image }}
+        MACHINE: ${{ inputs.machine }}
+        LAVA_NAME: ${{ inputs.lavaname }}
+        TARGET_DTB: ${{ steps.write_json.outputs.dtb_name }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        job_render_dir="$(dirname "$WORKSPACE")/job_render"
+        renders_dir="$job_render_dir/renders"
+
+        mkdir -p -- "$renders_dir"
+
+        docker run -i --rm \
+          --workdir="$job_render_dir" \
+          -v "$(dirname "$job_render_dir"):$(dirname "$job_render_dir")" \
+          -e "MACHINE=$MACHINE" \
+          -e "TARGET=$MACHINE" \
+          -e "LAVA_NAME=$LAVA_NAME" \
+          -e "TARGET_DTB=$TARGET_DTB" \
+          -e "BOOT_METHOD=flasher" \
+          "$DOCKER_IMAGE" \
+          bash -c '
+            set -euo pipefail
+            export BOOT_METHOD=flasher
+
+            python3 lava_Job_definition_generator.py \
+              --localjson ./data/cloudData.json \
+              --meta-qcom \
+              --video_pre-merge
+          '
+
+    - name: Patch device_type in rendered YAML
+      shell: bash
+      env:
+        MACHINE: ${{ inputs.machine }}
+        LAVA_NAME: ${{ inputs.lavaname }}
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+
+        job_render_dir="$(dirname "$WORKSPACE")/job_render"
+        yaml_file="$job_render_dir/renders/lava_job_definition.yaml"
+
+        if [ ! -f "$yaml_file" ]; then
+          echo "::error::Rendered YAML not found"
+          exit 1
+        fi
+
+        sed -i \
+          "s|^device_type:.*|device_type: ${LAVA_NAME}|" \
+          "$yaml_file"
+
+        echo "Patched device_type for $MACHINE"
